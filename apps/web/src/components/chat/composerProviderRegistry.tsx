@@ -7,10 +7,12 @@ import {
 } from "@t3tools/contracts";
 import {
   isClaudeUltrathinkPrompt,
+  normalizeCursorModelOptions,
   trimOrNull,
   getDefaultEffort,
   hasEffortLevel,
 } from "@t3tools/shared/model";
+import type { CursorModelOptions } from "@t3tools/contracts";
 import type { ReactNode } from "react";
 import {
   getProviderModelCapabilities,
@@ -18,6 +20,7 @@ import {
   normalizeCodexModelOptionsWithCapabilities,
 } from "../../providerModels";
 import { TraitsMenuContent, TraitsPicker } from "./TraitsPicker";
+import { CursorTraitsMenuContent, CursorTraitsPicker } from "./CursorTraitsPicker";
 
 export type ComposerProviderStateInput = {
   provider: ProviderKind;
@@ -168,6 +171,30 @@ const composerProviderRegistry: Record<ProviderKind, ProviderRegistryEntry> = {
         modelOptions={modelOptions}
         prompt={prompt}
         onPromptChange={onPromptChange}
+      />
+    ),
+  },
+  cursor: {
+    getState: ({ model, modelOptions }) => {
+      const normalized = normalizeCursorModelOptions(model, modelOptions?.cursor);
+      return {
+        provider: "cursor" as const,
+        promptEffort: null,
+        modelOptionsForDispatch: normalized ?? undefined,
+      };
+    },
+    renderTraitsMenuContent: ({ threadId, model, modelOptions }) => (
+      <CursorTraitsMenuContent
+        threadId={threadId}
+        model={model}
+        cursorModelOptions={(modelOptions as CursorModelOptions | undefined) ?? null}
+      />
+    ),
+    renderTraitsPicker: ({ threadId, model, modelOptions }) => (
+      <CursorTraitsPicker
+        threadId={threadId}
+        model={model}
+        cursorModelOptions={(modelOptions as CursorModelOptions | undefined) ?? null}
       />
     ),
   },

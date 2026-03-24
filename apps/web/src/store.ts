@@ -193,7 +193,7 @@ function toLegacySessionStatus(
 }
 
 function toLegacyProvider(providerName: string | null): ProviderKind {
-  if (providerName === "codex" || providerName === "claudeAgent") {
+  if (providerName === "codex" || providerName === "claudeAgent" || providerName === "cursor") {
     return providerName;
   }
   return "codex";

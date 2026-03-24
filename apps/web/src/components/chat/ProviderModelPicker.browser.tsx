@@ -1,4 +1,9 @@
-import { type ModelSlug, type ProviderKind, type ServerProvider } from "@t3tools/contracts";
+import {
+  CURSOR_MODEL_FAMILY_OPTIONS,
+  type ModelSlug,
+  type ProviderKind,
+  type ServerProvider,
+} from "@t3tools/contracts";
 import { page } from "vitest/browser";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
@@ -116,12 +121,15 @@ async function mountPicker(props: {
   document.body.append(host);
   const onProviderModelChange = vi.fn();
   const providers = props.providers ?? TEST_PROVIDERS;
-  const modelOptionsByProvider = getCustomModelOptionsByProvider(
-    DEFAULT_UNIFIED_SETTINGS,
-    providers,
-    props.provider,
-    props.model,
-  );
+  const modelOptionsByProvider = {
+    ...getCustomModelOptionsByProvider(
+      DEFAULT_UNIFIED_SETTINGS,
+      providers,
+      props.provider,
+      props.model,
+    ),
+    cursor: [...CURSOR_MODEL_FAMILY_OPTIONS],
+  };
   const screen = await render(
     <ProviderModelPicker
       provider={props.provider}
@@ -129,6 +137,7 @@ async function mountPicker(props: {
       lockedProvider={props.lockedProvider}
       providers={providers}
       modelOptionsByProvider={modelOptionsByProvider}
+      cursorModelOptions={null}
       triggerVariant={props.triggerVariant}
       onProviderModelChange={onProviderModelChange}
     />,
@@ -231,6 +240,23 @@ describe("ProviderModelPicker", () => {
         expect(text).toContain("Claude Haiku 4.5");
         expect(text).not.toContain("Codex");
       });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps Cursor submenu values as family keys (traits resolve the CLI slug)", async () => {
+    const mounted = await mountPicker({
+      provider: "cursor",
+      model: "claude-4.6-opus-high-thinking",
+      lockedProvider: "cursor",
+    });
+
+    try {
+      await page.getByRole("button").click();
+      await page.getByRole("menuitemradio", { name: "Codex 5.3" }).click();
+
+      expect(mounted.onProviderModelChange).toHaveBeenCalledWith("cursor", "gpt-5.3-codex");
     } finally {
       await mounted.cleanup();
     }

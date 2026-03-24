@@ -611,6 +611,51 @@ describe("ProviderCommandReactor", () => {
     });
   });
 
+  it("routes turns by explicit provider even when the model slug is shared", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.makeUnsafe("cmd-thread-create-cursor-shared-slug"),
+        threadId: ThreadId.makeUnsafe("thread-shared-slug"),
+        projectId: asProjectId("project-1"),
+        title: "Shared slug thread",
+        modelSelection: { provider: "cursor", model: "gpt-5.3-codex" },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        branch: null,
+        worktreePath: null,
+        createdAt: now,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-start-shared-slug"),
+        threadId: ThreadId.makeUnsafe("thread-shared-slug"),
+        message: {
+          messageId: asMessageId("user-message-shared-slug"),
+          role: "user",
+          text: "first",
+          attachments: [],
+        },
+        modelSelection: { provider: "cursor", model: "gpt-5.3-codex" },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.startSession.mock.calls.length === 1);
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
+      modelSelection: { provider: "cursor", model: "gpt-5.3-codex" },
+    });
+  });
+
   it("reuses the same provider session when runtime mode is unchanged", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();
@@ -725,6 +770,61 @@ describe("ProviderCommandReactor", () => {
           effort: "max",
         },
       },
+    });
+  });
+
+  it("restarts cursor sessions on model changes while preserving resumeCursor", async () => {
+    const harness = await createHarness({
+      threadModelSelection: { provider: "cursor", model: "composer-2" },
+      sessionModelSwitch: "unsupported",
+    });
+    const now = new Date().toISOString();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-start-cursor-model-1"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-cursor-model-1"),
+          role: "user",
+          text: "first cursor turn",
+          attachments: [],
+        },
+        modelSelection: { provider: "cursor", model: "composer-2" },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.startSession.mock.calls.length === 1);
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-start-cursor-model-2"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-cursor-model-2"),
+          role: "user",
+          text: "second cursor turn",
+          attachments: [],
+        },
+        modelSelection: { provider: "cursor", model: "composer-2-fast" },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.startSession.mock.calls.length === 2);
+    await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+
+    expect(harness.startSession.mock.calls[1]?.[1]).toMatchObject({
+      modelSelection: { provider: "cursor", model: "composer-2-fast" },
+      resumeCursor: { opaque: "resume-1" },
     });
   });
 

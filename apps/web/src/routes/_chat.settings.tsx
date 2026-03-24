@@ -103,6 +103,12 @@ const PROVIDER_SETTINGS: readonly InstallProviderSettings[] = [
     binaryPlaceholder: "Claude binary path",
     binaryDescription: "Path to the Claude binary",
   },
+  {
+    provider: "cursor",
+    title: "Cursor",
+    binaryPlaceholder: "Cursor agent binary path",
+    binaryDescription: "Path to the Cursor agent binary",
+  },
 ];
 
 const PROVIDER_STATUS_STYLES = {
@@ -301,12 +307,20 @@ function SettingsRouteView() {
         DEFAULT_UNIFIED_SETTINGS.providers.claudeAgent.binaryPath ||
       settings.providers.claudeAgent.customModels.length > 0,
     ),
+    cursor: Boolean(
+      settings.providers.cursor.binaryPath !==
+        DEFAULT_UNIFIED_SETTINGS.providers.cursor.binaryPath ||
+      settings.providers.cursor.apiEndpoint !==
+        DEFAULT_UNIFIED_SETTINGS.providers.cursor.apiEndpoint ||
+      settings.providers.cursor.customModels.length > 0,
+    ),
   });
   const [customModelInputByProvider, setCustomModelInputByProvider] = useState<
     Record<ProviderKind, string>
   >({
     codex: "",
     claudeAgent: "",
+    cursor: "",
   });
   const [customModelErrorByProvider, setCustomModelErrorByProvider] = useState<
     Partial<Record<ProviderKind, string | null>>
@@ -553,10 +567,12 @@ function SettingsRouteView() {
     setOpenProviderDetails({
       codex: false,
       claudeAgent: false,
+      cursor: false,
     });
     setCustomModelInputByProvider({
       codex: "",
       claudeAgent: "",
+      cursor: "",
     });
     setCustomModelErrorByProvider({});
   }
@@ -836,6 +852,7 @@ function SettingsRouteView() {
                       lockedProvider={null}
                       providers={serverProviders}
                       modelOptionsByProvider={gitModelOptionsByProvider}
+                      cursorModelOptions={null}
                       triggerVariant="outline"
                       triggerClassName="min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground"
                       onProviderModelChange={(provider, model) => {
@@ -1240,7 +1257,9 @@ function SettingsRouteView() {
                                 placeholder={
                                   providerCard.provider === "codex"
                                     ? "gpt-6.7-codex-ultra-preview"
-                                    : "claude-sonnet-5-0"
+                                    : providerCard.provider === "cursor"
+                                      ? "claude-4.6-sonnet-medium-thinking"
+                                      : "claude-sonnet-5-0"
                                 }
                                 spellCheck={false}
                               />

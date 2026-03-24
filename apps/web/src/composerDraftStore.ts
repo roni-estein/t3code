@@ -1,7 +1,11 @@
 import {
   CODEX_REASONING_EFFORT_OPTIONS,
+  CURSOR_REASONING_OPTIONS,
   type ClaudeCodeEffort,
   type CodexReasoningEffort,
+  type CursorModelOptions,
+  type CursorReasoningOption,
+  DEFAULT_REASONING_EFFORT_BY_PROVIDER,
   type ModelSlug,
   ModelSelection,
   ProjectId,
@@ -407,7 +411,7 @@ function shouldRemoveDraft(draft: ComposerThreadDraftState): boolean {
 }
 
 function normalizeProviderKind(value: unknown): ProviderKind | null {
-  return value === "codex" || value === "claudeAgent" ? value : null;
+  return value === "codex" || value === "claudeAgent" || value === "cursor" ? value : null;
 }
 
 function normalizeProviderModelOptions(
@@ -423,6 +427,10 @@ function normalizeProviderModelOptions(
   const claudeCandidate =
     candidate?.claudeAgent && typeof candidate.claudeAgent === "object"
       ? (candidate.claudeAgent as Record<string, unknown>)
+      : null;
+  const cursorCandidate =
+    candidate?.cursor && typeof candidate.cursor === "object"
+      ? (candidate.cursor as Record<string, unknown>)
       : null;
 
   const codexReasoningEffort: CodexReasoningEffort | undefined =
@@ -484,12 +492,41 @@ function normalizeProviderModelOptions(
         }
       : undefined;
 
-  if (!codex && !claude) {
+  const cursorReasoningRaw = cursorCandidate?.reasoning;
+  const cursorReasoning: CursorReasoningOption | undefined =
+    typeof cursorReasoningRaw === "string" &&
+    (CURSOR_REASONING_OPTIONS as readonly string[]).includes(cursorReasoningRaw)
+      ? (cursorReasoningRaw as CursorReasoningOption)
+      : undefined;
+  const cursorFastMode = cursorCandidate?.fastMode === true;
+  const cursorThinkingFalse = cursorCandidate?.thinking === false;
+  const cursorClaudeOpusTierRaw = cursorCandidate?.claudeOpusTier;
+  const cursorClaudeOpusTier =
+    cursorClaudeOpusTierRaw === "max" || cursorClaudeOpusTierRaw === "high"
+      ? cursorClaudeOpusTierRaw
+      : undefined;
+  const defaultCursorReasoning =
+    DEFAULT_REASONING_EFFORT_BY_PROVIDER.cursor as CursorReasoningOption;
+
+  const cursor: CursorModelOptions | undefined =
+    cursorCandidate !== null
+      ? {
+          ...(cursorReasoning && cursorReasoning !== defaultCursorReasoning
+            ? { reasoning: cursorReasoning }
+            : {}),
+          ...(cursorFastMode ? { fastMode: true } : {}),
+          ...(cursorThinkingFalse ? { thinking: false } : {}),
+          ...(cursorClaudeOpusTier === "max" ? { claudeOpusTier: "max" } : {}),
+        }
+      : undefined;
+
+  if (!codex && !claude && cursor === undefined) {
     return null;
   }
   return {
     ...(codex ? { codex } : {}),
     ...(claude ? { claudeAgent: claude } : {}),
+    ...(cursor !== undefined ? { cursor } : {}),
   };
 }
 

@@ -291,7 +291,7 @@ const make = Effect.gen(function* () {
       const modelChanged =
         requestedModelSelection !== undefined &&
         requestedModelSelection.model !== activeSession?.model;
-      const shouldRestartForModelChange = modelChanged && sessionModelSwitch === "restart-session";
+      const shouldRestartForModelChange = modelChanged && sessionModelSwitch === "unsupported";
       const previousModelSelection = threadModelSelections.get(threadId);
       const shouldRestartForModelSelectionChange =
         currentProvider === "claudeAgent" &&
@@ -307,10 +307,7 @@ const make = Effect.gen(function* () {
         return existingSessionThreadId;
       }
 
-      const resumeCursor =
-        providerChanged || shouldRestartForModelChange
-          ? undefined
-          : (activeSession?.resumeCursor ?? undefined);
+      const resumeCursor = providerChanged ? undefined : (activeSession?.resumeCursor ?? undefined);
       yield* Effect.logInfo("provider command reactor restarting provider session", {
         threadId,
         existingSessionThreadId,

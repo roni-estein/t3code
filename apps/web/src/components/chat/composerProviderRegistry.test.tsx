@@ -237,6 +237,40 @@ describe("getComposerProviderState", () => {
     });
   });
 
+  it("returns minimal state for Cursor without trait controls", () => {
+    const state = getComposerProviderState({
+      provider: "cursor",
+      model: "auto",
+      models: [],
+      prompt: "",
+      modelOptions: undefined,
+    });
+
+    expect(state).toEqual({
+      provider: "cursor",
+      promptEffort: null,
+      modelOptionsForDispatch: undefined,
+    });
+  });
+
+  it("dispatches Cursor fast traits separately from the family model key", () => {
+    const state = getComposerProviderState({
+      provider: "cursor",
+      model: "composer-2",
+      models: [],
+      prompt: "",
+      modelOptions: {
+        cursor: { fastMode: true },
+      },
+    });
+
+    expect(state).toEqual({
+      provider: "cursor",
+      promptEffort: null,
+      modelOptionsForDispatch: { fastMode: true },
+    });
+  });
+
   it("drops explicit Claude default/off overrides from dispatch while keeping the selected effort label", () => {
     const state = getComposerProviderState({
       provider: "claudeAgent",

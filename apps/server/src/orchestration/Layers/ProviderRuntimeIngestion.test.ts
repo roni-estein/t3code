@@ -692,6 +692,62 @@ describe("ProviderRuntimeIngestion", () => {
     expect(message?.streaming).toBe(false);
   });
 
+  it("preserves completed tool metadata on projected tool activities", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-tool-completed-with-data"),
+      provider: "cursor",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-tool-completed"),
+      itemId: asItemId("item-tool-completed"),
+      payload: {
+        itemType: "dynamic_tool_call",
+        status: "completed",
+        title: "Read File",
+        detail: "Read File",
+        data: {
+          toolCallId: "tool-read-1",
+          kind: "read",
+          rawOutput: {
+            content: 'import * as Effect from "effect/Effect"\n',
+          },
+        },
+      },
+    });
+
+    const thread = await waitForThread(harness.engine, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) => activity.id === "evt-tool-completed-with-data",
+      ),
+    );
+    const activity = thread.activities.find(
+      (entry: ProviderRuntimeTestActivity) => entry.id === "evt-tool-completed-with-data",
+    );
+    const payload =
+      activity?.payload && typeof activity.payload === "object"
+        ? (activity.payload as Record<string, unknown>)
+        : undefined;
+    const data =
+      payload?.data && typeof payload.data === "object"
+        ? (payload.data as Record<string, unknown>)
+        : undefined;
+    const rawOutput =
+      data?.rawOutput && typeof data.rawOutput === "object"
+        ? (data.rawOutput as Record<string, unknown>)
+        : undefined;
+
+    expect(activity?.kind).toBe("tool.completed");
+    expect(payload?.itemType).toBe("dynamic_tool_call");
+    expect(payload?.detail).toBe("Read File");
+    expect(data?.toolCallId).toBe("tool-read-1");
+    expect(data?.kind).toBe("read");
+    expect(rawOutput?.content).toBe('import * as Effect from "effect/Effect"\n');
+  });
+
   it("projects completed plan items into first-class proposed plans", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();

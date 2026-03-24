@@ -5,6 +5,7 @@ import { TrimmedNonEmptyString, TrimmedString } from "./baseSchemas";
 import {
   ClaudeModelOptions,
   CodexModelOptions,
+  CursorModelOptions,
   DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER,
 } from "./model";
 import { ModelSelection } from "./orchestration";
@@ -70,6 +71,14 @@ export const ClaudeSettings = Schema.Struct({
 });
 export type ClaudeSettings = typeof ClaudeSettings.Type;
 
+export const CursorSettings = Schema.Struct({
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(() => true)),
+  binaryPath: makeBinaryPathSetting("agent"),
+  apiEndpoint: TrimmedString.pipe(Schema.withDecodingDefault(() => "")),
+  customModels: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(() => [])),
+});
+export type CursorSettings = typeof CursorSettings.Type;
+
 export const ServerSettings = Schema.Struct({
   enableAssistantStreaming: Schema.Boolean.pipe(Schema.withDecodingDefault(() => false)),
   defaultThreadEnvMode: ThreadEnvMode.pipe(
@@ -86,6 +95,7 @@ export const ServerSettings = Schema.Struct({
   providers: Schema.Struct({
     codex: CodexSettings.pipe(Schema.withDecodingDefault(() => ({}))),
     claudeAgent: ClaudeSettings.pipe(Schema.withDecodingDefault(() => ({}))),
+    cursor: CursorSettings.pipe(Schema.withDecodingDefault(() => ({}))),
   }).pipe(Schema.withDecodingDefault(() => ({}))),
 });
 export type ServerSettings = typeof ServerSettings.Type;
@@ -113,6 +123,13 @@ const ClaudeModelOptionsPatch = Schema.Struct({
   fastMode: Schema.optionalKey(ClaudeModelOptions.fields.fastMode),
 });
 
+const CursorModelOptionsPatch = Schema.Struct({
+  reasoning: Schema.optionalKey(CursorModelOptions.fields.reasoning),
+  fastMode: Schema.optionalKey(CursorModelOptions.fields.fastMode),
+  thinking: Schema.optionalKey(CursorModelOptions.fields.thinking),
+  claudeOpusTier: Schema.optionalKey(CursorModelOptions.fields.claudeOpusTier),
+});
+
 const ModelSelectionPatch = Schema.Union([
   Schema.Struct({
     provider: Schema.optionalKey(Schema.Literal("codex")),
@@ -123,6 +140,11 @@ const ModelSelectionPatch = Schema.Union([
     provider: Schema.optionalKey(Schema.Literal("claudeAgent")),
     model: Schema.optionalKey(TrimmedNonEmptyString),
     options: Schema.optionalKey(ClaudeModelOptionsPatch),
+  }),
+  Schema.Struct({
+    provider: Schema.optionalKey(Schema.Literal("cursor")),
+    model: Schema.optionalKey(TrimmedNonEmptyString),
+    options: Schema.optionalKey(CursorModelOptionsPatch),
   }),
 ]);
 
@@ -139,6 +161,13 @@ const ClaudeSettingsPatch = Schema.Struct({
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 
+const CursorSettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+  binaryPath: Schema.optionalKey(Schema.String),
+  apiEndpoint: Schema.optionalKey(Schema.String),
+  customModels: Schema.optionalKey(Schema.Array(Schema.String)),
+});
+
 export const ServerSettingsPatch = Schema.Struct({
   enableAssistantStreaming: Schema.optionalKey(Schema.Boolean),
   defaultThreadEnvMode: Schema.optionalKey(ThreadEnvMode),
@@ -147,6 +176,7 @@ export const ServerSettingsPatch = Schema.Struct({
     Schema.Struct({
       codex: Schema.optionalKey(CodexSettingsPatch),
       claudeAgent: Schema.optionalKey(ClaudeSettingsPatch),
+      cursor: Schema.optionalKey(CursorSettingsPatch),
     }),
   ),
 });

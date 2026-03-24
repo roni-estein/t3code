@@ -860,7 +860,13 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   const iconConfig = workToneIcon(workEntry.tone);
   const EntryIcon = workEntryIcon(workEntry);
   const heading = toolWorkEntryHeading(workEntry);
-  const preview = workEntryPreview(workEntry);
+  const rawPreview = workEntryPreview(workEntry);
+  const preview =
+    rawPreview &&
+    normalizeCompactToolLabel(rawPreview).toLowerCase() ===
+      normalizeCompactToolLabel(heading).toLowerCase()
+      ? null
+      : rawPreview;
   const displayText = preview ? `${heading} - ${preview}` : heading;
   const hasChangedFiles = (workEntry.changedFiles?.length ?? 0) > 0;
   const previewIsChangedFiles = hasChangedFiles && !workEntry.command && !workEntry.detail;
