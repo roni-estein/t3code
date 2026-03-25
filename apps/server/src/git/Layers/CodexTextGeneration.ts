@@ -153,7 +153,7 @@ const makeCodexTextGeneration = Effect.gen(function* () {
         const reasoningEffort =
           modelSelection.options?.reasoningEffort ?? CODEX_GIT_TEXT_GENERATION_REASONING_EFFORT;
         const command = ChildProcess.make(
-          codexSettings?.binaryPath ?? "codex",
+          codexSettings?.binaryPath || "codex",
           [
             "exec",
             "--ephemeral",

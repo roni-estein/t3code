@@ -95,7 +95,7 @@ const makeClaudeTextGeneration = Effect.gen(function* () {
 
       const runClaudeCommand = Effect.gen(function* () {
         const command = ChildProcess.make(
-          claudeSettings?.binaryPath ?? "claude",
+          claudeSettings?.binaryPath || "claude",
           [
             "-p",
             "--output-format",
