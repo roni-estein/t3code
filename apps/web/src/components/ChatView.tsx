@@ -121,11 +121,7 @@ import { SidebarTrigger } from "./ui/sidebar";
 import { newCommandId, newMessageId, newThreadId } from "~/lib/utils";
 import { readNativeApi } from "~/nativeApi";
 import { useAppSettings } from "../appSettings";
-import {
-  getCustomModelOptionsByProvider,
-  getCustomModelsByProvider,
-  resolveAppModelSelection,
-} from "../modelSelection";
+import { getCustomModelOptionsByProvider, resolveAppModelSelection } from "../modelSelection";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import {
   type ComposerImageAttachment,
@@ -610,13 +606,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
     : null;
   const selectedProvider: ProviderKind =
     lockedProvider ?? selectedProviderByThreadId ?? threadProvider ?? "codex";
-  const customModelsByProvider = useMemo(() => getCustomModelsByProvider(settings), [settings]);
   const { modelOptions: composerModelOptions, selectedModel } = useEffectiveComposerModelState({
     threadId,
     selectedProvider,
     threadModelSelection: activeThread?.modelSelection,
     projectModelSelection: activeProject?.defaultModelSelection,
-    customModelsByProvider,
+    settings,
   });
   const composerProviderState = useMemo(
     () =>
@@ -3100,7 +3095,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         scheduleComposerFocus();
         return;
       }
-      const resolvedModel = resolveAppModelSelection(provider, customModelsByProvider, model);
+      const resolvedModel = resolveAppModelSelection(provider, settings, model);
       const nextModelSelection: ModelSelection = {
         provider,
         model: resolvedModel,
@@ -3115,7 +3110,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       scheduleComposerFocus,
       setComposerDraftModelSelection,
       setStickyComposerModelSelection,
-      customModelsByProvider,
+      settings,
     ],
   );
   const setPromptFromTraits = useCallback(

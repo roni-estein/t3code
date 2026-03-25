@@ -90,7 +90,7 @@ const makeClaudeTextGeneration = Effect.gen(function* () {
 
       const claudeSettings = yield* Effect.map(
         serverSettingsService.getSettings,
-        (settings) => settings.claude,
+        (settings) => settings.providers.claudeAgent,
       ).pipe(Effect.catch(() => Effect.undefined));
 
       const runClaudeCommand = Effect.gen(function* () {

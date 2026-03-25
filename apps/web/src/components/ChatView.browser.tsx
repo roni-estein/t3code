@@ -12,6 +12,7 @@ import {
   WS_CHANNELS,
   WS_METHODS,
   OrchestrationSessionStatus,
+  DEFAULT_SERVER_SETTINGS,
 } from "@t3tools/contracts";
 import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
 import { HttpResponse, http, ws } from "msw";
@@ -30,6 +31,7 @@ import { isMacPlatform } from "../lib/utils";
 import { getRouter } from "../router";
 import { useStore } from "../store";
 import { estimateTimelineMessageHeight } from "./timelineHeight";
+import { DEFAULT_CLIENT_SETTINGS } from "~/clientSettings";
 
 const THREAD_ID = "thread-browser-test" as ThreadId;
 const UUID_ROUTE_RE = /^\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -118,13 +120,8 @@ function createBaseServerConfig(): ServerConfig {
     ],
     availableEditors: [],
     settings: {
-      claude: { binaryPath: "" },
-      codex: { binaryPath: "", homePath: "" },
-      enableAssistantStreaming: false,
-      defaultThreadEnvMode: "local" as const,
-      customCodexModels: [],
-      customClaudeModels: [],
-      textGenerationModelSelection: { provider: "codex" as const, model: "gpt-5.4-mini" },
+      ...DEFAULT_SERVER_SETTINGS,
+      ...DEFAULT_CLIENT_SETTINGS,
     },
   };
 }

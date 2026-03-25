@@ -89,18 +89,22 @@ export function deriveProviderStartOptions(
   settings: ServerSettings,
 ): ProviderStartOptions | undefined {
   const providerOptions: ProviderStartOptions = {
-    ...(settings.codex
+    ...(settings.providers.codex
       ? {
           codex: {
-            ...(settings.codex.binaryPath ? { binaryPath: settings.codex.binaryPath } : {}),
-            ...(settings.codex.homePath ? { homePath: settings.codex.homePath } : {}),
+            ...(settings.providers.codex.binaryPath
+              ? { binaryPath: settings.providers.codex.binaryPath }
+              : {}),
+            ...(settings.providers.codex.homePath
+              ? { homePath: settings.providers.codex.homePath }
+              : {}),
           },
         }
       : {}),
-    ...(settings.claude
+    ...(settings.providers.claudeAgent
       ? {
           claudeAgent: {
-            binaryPath: settings.claude.binaryPath,
+            binaryPath: settings.providers.claudeAgent.binaryPath,
           },
         }
       : {}),

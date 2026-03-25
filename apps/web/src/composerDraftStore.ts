@@ -31,6 +31,7 @@ import {
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { createDebouncedStorage, createMemoryStorage } from "./lib/storage";
+import { UnifiedSettings } from "./appSettings";
 
 export const COMPOSER_DRAFT_STORAGE_KEY = "t3code:composer-drafts:v1";
 const COMPOSER_DRAFT_STORAGE_VERSION = 3;
@@ -616,7 +617,7 @@ export function deriveEffectiveComposerModelState(input: {
   selectedProvider: ProviderKind;
   threadModelSelection: ModelSelection | null | undefined;
   projectModelSelection: ModelSelection | null | undefined;
-  customModelsByProvider: Record<ProviderKind, readonly string[]>;
+  settings: UnifiedSettings;
 }): EffectiveComposerModelState {
   const baseModel = resolveModelSlugForProvider(
     input.selectedProvider,
@@ -626,11 +627,7 @@ export function deriveEffectiveComposerModelState(input: {
   );
   const activeSelection = input.draft?.modelSelectionByProvider?.[input.selectedProvider];
   const selectedModel = activeSelection?.model
-    ? resolveAppModelSelection(
-        input.selectedProvider,
-        input.customModelsByProvider,
-        activeSelection.model,
-      )
+    ? resolveAppModelSelection(input.selectedProvider, input.settings, activeSelection.model)
     : baseModel;
   const modelOptions =
     modelSelectionByProviderToOptions(input.draft?.modelSelectionByProvider) ??
@@ -2160,7 +2157,7 @@ export function useEffectiveComposerModelState(input: {
   selectedProvider: ProviderKind;
   threadModelSelection: ModelSelection | null | undefined;
   projectModelSelection: ModelSelection | null | undefined;
-  customModelsByProvider: Record<ProviderKind, readonly string[]>;
+  settings: UnifiedSettings;
 }): EffectiveComposerModelState {
   const draft = useComposerThreadDraft(input.threadId);
 
@@ -2171,11 +2168,11 @@ export function useEffectiveComposerModelState(input: {
         selectedProvider: input.selectedProvider,
         threadModelSelection: input.threadModelSelection,
         projectModelSelection: input.projectModelSelection,
-        customModelsByProvider: input.customModelsByProvider,
+        settings: input.settings,
       }),
     [
       draft,
-      input.customModelsByProvider,
+      input.settings,
       input.projectModelSelection,
       input.selectedProvider,
       input.threadModelSelection,

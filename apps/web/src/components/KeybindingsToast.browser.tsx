@@ -54,13 +54,13 @@ function createBaseServerConfig(): ServerConfig {
     ],
     availableEditors: [],
     settings: {
-      claude: { binaryPath: "" },
-      codex: { binaryPath: "", homePath: "" },
       enableAssistantStreaming: false,
       defaultThreadEnvMode: "local" as const,
-      customCodexModels: [],
-      customClaudeModels: [],
       textGenerationModelSelection: { provider: "codex" as const, model: "gpt-5.4-mini" },
+      providers: {
+        codex: { binaryPath: "", homePath: "", customModels: [] },
+        claudeAgent: { binaryPath: "", customModels: [] },
+      },
     },
   };
 }

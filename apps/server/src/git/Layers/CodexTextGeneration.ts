@@ -142,7 +142,7 @@ const makeCodexTextGeneration = Effect.gen(function* () {
 
       const codexSettings = yield* Effect.map(
         serverSettingsService.getSettings,
-        (settings) => settings.codex,
+        (settings) => settings.providers.codex,
       ).pipe(Effect.catch(() => Effect.undefined));
 
       const runCodexCommand = Effect.gen(function* () {

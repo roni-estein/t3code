@@ -7,10 +7,8 @@ import { getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
 import { useAppSettings } from "../appSettings";
 import {
   getCustomModelOptionsByProvider,
-  getCustomModelsForProvider,
   MAX_CUSTOM_MODEL_LENGTH,
   MODEL_PROVIDER_SETTINGS,
-  patchCustomModels,
   resolveAppModelSelectionState,
 } from "../modelSelection";
 import { APP_VERSION } from "../branding";
@@ -61,11 +59,9 @@ const TIMESTAMP_FORMAT_LABELS = {
   "24-hour": "24-hour",
 } as const;
 
-type InstallBinarySettingsKey = "claudeBinaryPath" | "codexBinaryPath";
 type InstallProviderSettings = {
   provider: ProviderKind;
   title: string;
-  binaryPathKey: InstallBinarySettingsKey;
   binaryPlaceholder: string;
   binaryDescription: ReactNode;
   homePathKey?: "codexHomePath";
@@ -77,7 +73,6 @@ const INSTALL_PROVIDER_SETTINGS: readonly InstallProviderSettings[] = [
   {
     provider: "codex",
     title: "Codex",
-    binaryPathKey: "codexBinaryPath",
     binaryPlaceholder: "Codex binary path",
     binaryDescription: (
       <>
@@ -91,7 +86,6 @@ const INSTALL_PROVIDER_SETTINGS: readonly InstallProviderSettings[] = [
   {
     provider: "claudeAgent",
     title: "Claude",
-    binaryPathKey: "claudeBinaryPath",
     binaryPlaceholder: "Claude binary path",
     binaryDescription: (
       <>
@@ -195,8 +189,8 @@ function SettingsRouteView() {
   const [isOpeningKeybindings, setIsOpeningKeybindings] = useState(false);
   const [openKeybindingsError, setOpenKeybindingsError] = useState<string | null>(null);
   const [openInstallProviders, setOpenInstallProviders] = useState<Record<ProviderKind, boolean>>({
-    codex: Boolean(settings.codex?.binaryPath || settings.codex?.homePath),
-    claudeAgent: Boolean(settings.claude?.binaryPath),
+    codex: Boolean(settings.providers.codex.binaryPath || settings.providers.codex.homePath),
+    claudeAgent: Boolean(settings.providers.claudeAgent.binaryPath),
   });
   const [selectedCustomModelProvider, setSelectedCustomModelProvider] =
     useState<ProviderKind>("codex");
@@ -211,9 +205,7 @@ function SettingsRouteView() {
   >({});
   const [showAllCustomModels, setShowAllCustomModels] = useState(false);
 
-  const codexBinaryPath = settings.codex?.binaryPath ?? "";
-  const codexHomePath = settings.codex?.homePath ?? "";
-  const claudeBinaryPath = settings.claude?.binaryPath ?? "";
+  const codexHomePath = settings.providers.codex.homePath;
   const keybindingsConfigPath = serverConfigQuery.data?.keybindingsConfigPath ?? null;
   const availableEditors = serverConfigQuery.data?.availableEditors;
 
@@ -231,9 +223,11 @@ function SettingsRouteView() {
   )!;
   const selectedCustomModelInput = customModelInputByProvider[selectedCustomModelProvider];
   const selectedCustomModelError = customModelErrorByProvider[selectedCustomModelProvider] ?? null;
-  const totalCustomModels = settings.customCodexModels.length + settings.customClaudeModels.length;
+  const totalCustomModels =
+    settings.providers.codex.customModels.length +
+    settings.providers.claudeAgent.customModels.length;
   const savedCustomModelRows = MODEL_PROVIDER_SETTINGS.flatMap((providerSettings) =>
-    getCustomModelsForProvider(settings, providerSettings.provider).map((slug) => ({
+    settings.providers[providerSettings.provider].customModels.map((slug) => ({
       key: `${providerSettings.provider}:${slug}`,
       provider: providerSettings.provider,
       providerTitle: providerSettings.title,
@@ -244,9 +238,9 @@ function SettingsRouteView() {
     ? savedCustomModelRows
     : savedCustomModelRows.slice(0, 5);
   const isInstallSettingsDirty =
-    settings.claude?.binaryPath !== defaults.claude?.binaryPath ||
-    settings.codex?.binaryPath !== defaults.codex?.binaryPath ||
-    settings.codex?.homePath !== defaults.codex?.homePath;
+    settings.providers.claudeAgent.binaryPath !== defaults.providers.claudeAgent.binaryPath ||
+    settings.providers.codex.binaryPath !== defaults.providers.codex.binaryPath ||
+    settings.providers.codex.homePath !== defaults.providers.codex.homePath;
   const changedSettingLabels = [
     ...(theme !== "system" ? ["Theme"] : []),
     ...(settings.timestampFormat !== defaults.timestampFormat ? ["Time format"] : []),
@@ -262,7 +256,8 @@ function SettingsRouteView() {
     JSON.stringify(defaults.textGenerationModelSelection ?? null)
       ? ["Git writing model"]
       : []),
-    ...(settings.customCodexModels.length > 0 || settings.customClaudeModels.length > 0
+    ...(settings.providers.codex.customModels.length > 0 ||
+    settings.providers.claudeAgent.customModels.length > 0
       ? ["Custom models"]
       : []),
     ...(isInstallSettingsDirty ? ["Provider installs"] : []),
@@ -294,7 +289,7 @@ function SettingsRouteView() {
   const addCustomModel = useCallback(
     (provider: ProviderKind) => {
       const customModelInput = customModelInputByProvider[provider];
-      const customModels = getCustomModelsForProvider(settings, provider);
+      const customModels = settings.providers[provider].customModels;
       const normalized = normalizeModelSlug(customModelInput, provider);
       if (!normalized) {
         setCustomModelErrorByProvider((existing) => ({
@@ -325,7 +320,15 @@ function SettingsRouteView() {
         return;
       }
 
-      updateSettings(patchCustomModels(provider, [...customModels, normalized]));
+      updateSettings({
+        providers: {
+          ...settings.providers,
+          [provider]: {
+            ...settings.providers[provider],
+            customModels: [...customModels, normalized],
+          },
+        },
+      });
       setCustomModelInputByProvider((existing) => ({
         ...existing,
         [provider]: "",
@@ -340,13 +343,16 @@ function SettingsRouteView() {
 
   const removeCustomModel = useCallback(
     (provider: ProviderKind, slug: string) => {
-      const customModels = getCustomModelsForProvider(settings, provider);
-      updateSettings(
-        patchCustomModels(
-          provider,
-          customModels.filter((model) => model !== slug),
-        ),
-      );
+      const customModels = settings.providers[provider].customModels;
+      updateSettings({
+        providers: {
+          ...settings.providers,
+          [provider]: {
+            ...settings.providers[provider],
+            customModels: customModels.filter((model) => model !== slug),
+          },
+        },
+      });
       setCustomModelErrorByProvider((existing) => ({
         ...existing,
         [provider]: null,
@@ -699,8 +705,17 @@ function SettingsRouteView() {
                       label="custom models"
                       onClick={() => {
                         updateSettings({
-                          customCodexModels: defaults.customCodexModels,
-                          customClaudeModels: defaults.customClaudeModels,
+                          providers: {
+                            ...settings.providers,
+                            codex: {
+                              ...settings.providers.codex,
+                              customModels: defaults.providers.codex.customModels,
+                            },
+                            claudeAgent: {
+                              ...settings.providers.claudeAgent,
+                              customModels: defaults.providers.claudeAgent.customModels,
+                            },
+                          },
                         });
                         setCustomModelErrorByProvider({});
                         setShowAllCustomModels(false);
@@ -831,10 +846,17 @@ function SettingsRouteView() {
                       label="provider installs"
                       onClick={() => {
                         updateSettings({
-                          claude: { binaryPath: defaults.claude?.binaryPath ?? "" },
-                          codex: {
-                            binaryPath: defaults.codex?.binaryPath ?? "",
-                            homePath: defaults.codex?.homePath ?? "",
+                          providers: {
+                            ...settings.providers,
+                            claudeAgent: {
+                              ...settings.providers.claudeAgent,
+                              binaryPath: defaults.providers.claudeAgent.binaryPath,
+                            },
+                            codex: {
+                              ...settings.providers.codex,
+                              binaryPath: defaults.providers.codex.binaryPath,
+                              homePath: defaults.providers.codex.homePath,
+                            },
                           },
                         });
                         setOpenInstallProviders({
@@ -852,13 +874,15 @@ function SettingsRouteView() {
                       const isOpen = openInstallProviders[providerSettings.provider];
                       const isDirty =
                         providerSettings.provider === "codex"
-                          ? settings.codex?.binaryPath !== defaults.codex?.binaryPath ||
-                            settings.codex?.homePath !== defaults.codex?.homePath
-                          : settings.claude?.binaryPath !== defaults.claude?.binaryPath;
+                          ? settings.providers.codex.binaryPath !==
+                              defaults.providers.codex.binaryPath ||
+                            settings.providers.codex.homePath !== defaults.providers.codex.homePath
+                          : settings.providers.claudeAgent.binaryPath !==
+                            defaults.providers.claudeAgent.binaryPath;
                       const binaryPathValue =
-                        providerSettings.binaryPathKey === "claudeBinaryPath"
-                          ? (settings.claude?.binaryPath ?? "")
-                          : codexBinaryPath;
+                        providerSettings.provider === "claudeAgent"
+                          ? settings.providers.claudeAgent.binaryPath
+                          : settings.providers.codex.binaryPath;
 
                       return (
                         <Collapsible
@@ -900,32 +924,26 @@ function SettingsRouteView() {
                               <div className="border-t border-border/70 px-4 py-4">
                                 <div className="space-y-3">
                                   <label
-                                    htmlFor={`provider-install-${providerSettings.binaryPathKey}`}
+                                    htmlFor={`provider-install-${providerSettings.provider}-binary-path`}
                                     className="block"
                                   >
                                     <span className="block text-xs font-medium text-foreground">
                                       {providerSettings.title} binary path
                                     </span>
                                     <Input
-                                      id={`provider-install-${providerSettings.binaryPathKey}`}
+                                      id={`provider-install-${providerSettings.provider}-binary-path`}
                                       className="mt-1"
                                       value={binaryPathValue}
                                       onChange={(event) =>
-                                        updateSettings(
-                                          providerSettings.provider === "claudeAgent"
-                                            ? {
-                                                claude: {
-                                                  ...settings.claude,
-                                                  binaryPath: event.target.value,
-                                                },
-                                              }
-                                            : {
-                                                codex: {
-                                                  ...settings.codex,
-                                                  binaryPath: event.target.value,
-                                                },
-                                              },
-                                        )
+                                        updateSettings({
+                                          providers: {
+                                            ...settings.providers,
+                                            [providerSettings.provider]: {
+                                              ...settings.providers[providerSettings.provider],
+                                              binaryPath: event.target.value,
+                                            },
+                                          },
+                                        })
                                       }
                                       placeholder={providerSettings.binaryPlaceholder}
                                       spellCheck={false}
@@ -949,9 +967,12 @@ function SettingsRouteView() {
                                         value={codexHomePath}
                                         onChange={(event) =>
                                           updateSettings({
-                                            codex: {
-                                              ...settings.codex,
-                                              homePath: event.target.value,
+                                            providers: {
+                                              ...settings.providers,
+                                              codex: {
+                                                ...settings.providers.codex,
+                                                homePath: event.target.value,
+                                              },
                                             },
                                           })
                                         }

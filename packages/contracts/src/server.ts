@@ -13,30 +13,33 @@ export type ThreadEnvMode = typeof ThreadEnvMode.Type;
 export const CodexSettings = Schema.Struct({
   binaryPath: Schema.String.pipe(Schema.withDecodingDefault(() => "")),
   homePath: Schema.String.pipe(Schema.withDecodingDefault(() => "")),
+  customModels: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(() => [])),
 });
 export type CodexSettings = typeof CodexSettings.Type;
 
 export const ClaudeSettings = Schema.Struct({
   binaryPath: Schema.String.pipe(Schema.withDecodingDefault(() => "")),
+  customModels: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(() => [])),
 });
 export type ClaudeSettings = typeof ClaudeSettings.Type;
 
 export const ServerSettings = Schema.Struct({
-  codex: CodexSettings.pipe(Schema.withDecodingDefault(() => ({}))),
-  claude: ClaudeSettings.pipe(Schema.withDecodingDefault(() => ({}))),
-
   enableAssistantStreaming: Schema.Boolean.pipe(Schema.withDecodingDefault(() => false)),
   defaultThreadEnvMode: ThreadEnvMode.pipe(
     Schema.withDecodingDefault(() => "local" as const satisfies ThreadEnvMode),
   ),
-  customCodexModels: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(() => [])),
-  customClaudeModels: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(() => [])),
   textGenerationModelSelection: ModelSelection.pipe(
     Schema.withDecodingDefault(() => ({
       provider: "codex" as const,
       model: DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER.codex,
     })),
   ),
+
+  // Provider specific settings
+  providers: Schema.Struct({
+    codex: CodexSettings.pipe(Schema.withDecodingDefault(() => ({}))),
+    claudeAgent: ClaudeSettings.pipe(Schema.withDecodingDefault(() => ({}))),
+  }),
 });
 export type ServerSettings = typeof ServerSettings.Type;
 

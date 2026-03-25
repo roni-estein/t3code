@@ -5,6 +5,7 @@ import {
   ClaudeModelOptions,
   CodexModelOptions,
   DEFAULT_MODEL_BY_PROVIDER,
+  DEFAULT_SERVER_SETTINGS,
   ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -21,6 +22,7 @@ import {
   useComposerThreadDraft,
   useEffectiveComposerModelState,
 } from "../../composerDraftStore";
+import { DEFAULT_CLIENT_SETTINGS } from "~/clientSettings";
 
 // ── Claude TraitsPicker tests ─────────────────────────────────────────
 
@@ -38,7 +40,10 @@ function ClaudeTraitsPickerHarness(props: {
     selectedProvider: "claudeAgent",
     threadModelSelection: props.fallbackModelSelection,
     projectModelSelection: null,
-    customModelsByProvider: { codex: [], claudeAgent: [] },
+    settings: {
+      ...DEFAULT_SERVER_SETTINGS,
+      ...DEFAULT_CLIENT_SETTINGS,
+    },
   });
   const handlePromptChange = useCallback(
     (nextPrompt: string) => {
