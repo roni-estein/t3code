@@ -252,8 +252,10 @@ const make = Effect.gen(function* () {
       readonly provider?: ProviderKind;
     }) =>
       Effect.gen(function* () {
-        const serverSettings = yield* serverSettingsService.getSettings;
-        const providerOptions = deriveProviderStartOptions(serverSettings);
+        const providerOptions = yield* Effect.map(
+          serverSettingsService.getSettings,
+          deriveProviderStartOptions,
+        );
         return yield* providerService.startSession(threadId, {
           threadId,
           ...(preferredProvider ? { provider: preferredProvider } : {}),
