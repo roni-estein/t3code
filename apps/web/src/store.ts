@@ -1,6 +1,6 @@
 import { Fragment, type ReactNode, createElement, useEffect } from "react";
 import {
-  type ProviderKind,
+  ProviderKind,
   ThreadId,
   type OrchestrationReadModel,
   type OrchestrationSessionStatus,
@@ -9,6 +9,7 @@ import { resolveModelSlugForProvider } from "@t3tools/shared/model";
 import { create } from "zustand";
 import { type ChatMessage, type Project, type Thread } from "./types";
 import { Debouncer } from "@tanstack/react-pacer";
+import { Schema } from "effect";
 
 // ── State ────────────────────────────────────────────────────────────
 
@@ -193,7 +194,7 @@ function toLegacySessionStatus(
 }
 
 function toLegacyProvider(providerName: string | null): ProviderKind {
-  if (providerName === "codex" || providerName === "claudeAgent" || providerName === "cursor") {
+  if (Schema.is(ProviderKind)(providerName)) {
     return providerName;
   }
   return "codex";
