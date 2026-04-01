@@ -4,7 +4,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { CursorModelSelection } from "@t3tools/contracts";
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
 
-import { TextGenerationError } from "../Errors.ts";
+import { TextGenerationError } from "@t3tools/contracts";
 import {
   type ThreadTitleGenerationResult,
   type TextGenerationShape,
@@ -180,7 +180,6 @@ const makeCursorTextGeneration = Effect.gen(function* () {
           const detail = stderrDetail.length > 0 ? stderrDetail : stdoutDetail;
           return yield* new TextGenerationError({
             operation,
-            commandOutput,
             detail:
               detail.length > 0
                 ? `Cursor Agent command failed: ${detail}`
@@ -216,7 +215,6 @@ const makeCursorTextGeneration = Effect.gen(function* () {
             new TextGenerationError({
               operation,
               detail: "Cursor Agent returned unexpected output format.",
-              commandOutput,
               cause,
             }),
           ),
@@ -231,7 +229,6 @@ const makeCursorTextGeneration = Effect.gen(function* () {
         return yield* new TextGenerationError({
           operation,
           detail: "Cursor Agent returned an unsuccessful result.",
-          commandOutput,
         });
       }
 
@@ -240,7 +237,6 @@ const makeCursorTextGeneration = Effect.gen(function* () {
         return yield* new TextGenerationError({
           operation,
           detail: "Cursor Agent returned empty output.",
-          commandOutput,
         });
       }
 
@@ -253,7 +249,6 @@ const makeCursorTextGeneration = Effect.gen(function* () {
               operation,
               detail: "Cursor Agent returned invalid structured output.",
               cause,
-              commandOutput,
             }),
           ),
         ),

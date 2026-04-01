@@ -8,7 +8,7 @@ import { describe, expect, vi } from "vitest";
 
 import { GitCoreLive, makeGitCore } from "./GitCore.ts";
 import { GitCore, type GitCoreShape } from "../Services/GitCore.ts";
-import { GitCommandError } from "../Errors.ts";
+import { GitCommandError } from "@t3tools/contracts";
 import { type ProcessRunResult, runProcess } from "../../processRunner.ts";
 import { ServerConfig } from "../../config.ts";
 
@@ -138,6 +138,13 @@ function buildLargeText(lineCount = 20_000): string {
     .concat("\n");
 }
 
+function splitNullSeparatedPaths(input: string): string[] {
+  return input
+    .split("\0")
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+}
+
 // ── Tests ──
 
 it.layer(TestLayer)("git integration", (it) => {
@@ -185,6 +192,55 @@ it.layer(TestLayer)("git integration", (it) => {
         expect(result.isRepo).toBe(true);
         expect(result.hasOriginRemote).toBe(false);
         expect(result.branches.length).toBeGreaterThanOrEqual(1);
+      }),
+    );
+  });
+
+  describe("workspace helpers", () => {
+    it.effect("filterIgnoredPaths chunks large path lists and preserves kept paths", () =>
+      Effect.gen(function* () {
+        const cwd = "/virtual/repo";
+        const relativePaths = Array.from({ length: 340 }, (_, index) => {
+          const prefix = index % 3 === 0 ? "ignored" : "kept";
+          return `${prefix}/segment-${String(index).padStart(4, "0")}/${"x".repeat(900)}.ts`;
+        });
+        const expectedPaths = relativePaths.filter(
+          (relativePath) => !relativePath.startsWith("ignored/"),
+        );
+
+        const seenChunks: string[][] = [];
+        const core = yield* makeIsolatedGitCore((input) => {
+          if (input.args.join(" ") !== "check-ignore --no-index -z --stdin") {
+            return Effect.fail(
+              new GitCommandError({
+                operation: input.operation,
+                command: `git ${input.args.join(" ")}`,
+                cwd: input.cwd,
+                detail: "unexpected git command in chunking test",
+              }),
+            );
+          }
+
+          const chunkPaths = splitNullSeparatedPaths(input.stdin ?? "");
+          seenChunks.push(chunkPaths);
+          const ignoredPaths = chunkPaths.filter((relativePath) =>
+            relativePath.startsWith("ignored/"),
+          );
+
+          return Effect.succeed({
+            code: ignoredPaths.length > 0 ? 0 : 1,
+            stdout: ignoredPaths.length > 0 ? `${ignoredPaths.join("\0")}\0` : "",
+            stderr: "",
+            stdoutTruncated: false,
+            stderrTruncated: false,
+          });
+        });
+
+        const result = yield* core.filterIgnoredPaths(cwd, relativePaths);
+
+        expect(seenChunks.length).toBeGreaterThan(1);
+        expect(seenChunks.flat()).toEqual(relativePaths);
+        expect(result).toEqual(expectedPaths);
       }),
     );
   });
@@ -321,7 +377,65 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
-    effect("isDefault is false when no remote exists", () =>
+    it.effect("parses separate branch names when column.ui is always enabled", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(tmp);
+        const createdBranchNames = [
+          "go-bin",
+          "copilot/rewrite-cli-in-go",
+          "copilot/rewrite-cli-in-rust",
+        ] as const;
+        for (const branchName of createdBranchNames) {
+          yield* (yield* GitCore).createBranch({ cwd: tmp, branch: branchName });
+        }
+        yield* git(tmp, ["config", "column.ui", "always"]);
+
+        const rawBranchOutput = yield* git(tmp, ["branch", "--no-color"], {
+          ...process.env,
+          COLUMNS: "120",
+        });
+        expect(
+          rawBranchOutput
+            .split("\n")
+            .some(
+              (line) =>
+                createdBranchNames.filter((branchName) => line.includes(branchName)).length >= 2,
+            ),
+        ).toBe(true);
+
+        const realGitCore = yield* GitCore;
+        const core = yield* makeIsolatedGitCore((input) =>
+          realGitCore.execute(
+            input.args[0] === "branch"
+              ? {
+                  ...input,
+                  env: { ...input.env, COLUMNS: "120" },
+                }
+              : input,
+          ),
+        );
+
+        const result = yield* core.listBranches({ cwd: tmp });
+        const localBranchNames = result.branches
+          .filter((branch) => !branch.isRemote)
+          .map((branch) => branch.name);
+
+        expect(localBranchNames).toHaveLength(4);
+        expect(localBranchNames).toEqual(
+          expect.arrayContaining([initialBranch, ...createdBranchNames]),
+        );
+        expect(
+          localBranchNames.some(
+            (branchName) =>
+              createdBranchNames.filter((createdBranch) => branchName.includes(createdBranch))
+                .length >= 2,
+          ),
+        ).toBe(false);
+      }),
+    );
+
+    it.effect("isDefault is false when no remote exists", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         yield* initRepoWithCommit(tmp);
@@ -472,7 +586,10 @@ it.layer(TestLayer)("git integration", (it) => {
               expect(details.aheadCount).toBe(0);
               expect(details.behindCount).toBe(1);
             },
-            { timeout: ASYNC_GIT_WAIT_TIMEOUT_MS },
+            {
+              timeout: ASYNC_GIT_WAIT_TIMEOUT_MS,
+              interval: 100,
+            },
           ),
         );
       }),
@@ -555,7 +672,13 @@ it.layer(TestLayer)("git integration", (it) => {
         const core = yield* makeIsolatedGitCore((input) => {
           if (input.args[0] === "fetch") {
             fetchArgs = [...input.args];
-            return Effect.succeed({ code: 0, stdout: "", stderr: "" });
+            return Effect.succeed({
+              code: 0,
+              stdout: "",
+              stderr: "",
+              stdoutTruncated: false,
+              stderrTruncated: false,
+            });
           }
           return realGitCore.execute(input);
         });
@@ -611,7 +734,13 @@ it.layer(TestLayer)("git integration", (it) => {
           if (input.args[0] === "fetch") {
             fetchStarted = true;
             return Effect.promise(() =>
-              waitForReleasePromise.then(() => ({ code: 0, stdout: "", stderr: "" })),
+              waitForReleasePromise.then(() => ({
+                code: 0,
+                stdout: "",
+                stderr: "",
+                stdoutTruncated: false,
+                stderrTruncated: false,
+              })),
             );
           }
           return realGitCore.execute(input);
@@ -1834,7 +1963,7 @@ it.layer(TestLayer)("git integration", (it) => {
         let didFailRemoteBranches = false;
         let didFailRemoteNames = false;
         const core = yield* makeIsolatedGitCore((input) => {
-          if (input.args.join(" ") === "branch --no-color --remotes") {
+          if (input.args.join(" ") === "branch --no-color --no-column --remotes") {
             didFailRemoteBranches = true;
             return Effect.fail(
               new GitCommandError({

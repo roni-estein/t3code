@@ -6,6 +6,7 @@ import type {
   ServerProviderAuth,
   ServerProviderModel,
   ServerProviderState,
+  ServerSettingsError,
 } from "@t3tools/contracts";
 import { normalizeModelSlug, resolveContextWindow, resolveEffort } from "@t3tools/shared/model";
 import { Effect, Equal, Layer, Option, Result, Stream } from "effect";
@@ -20,7 +21,7 @@ import {
 } from "../providerSnapshot";
 import { makeManagedServerProvider } from "../makeManagedServerProvider";
 import { CursorProvider } from "../Services/CursorProvider";
-import { ServerSettingsError, ServerSettingsService } from "../../serverSettings";
+import { ServerSettingsService } from "../../serverSettings";
 
 const PROVIDER = "cursor" as const;
 const EMPTY_CAPABILITIES: ModelCapabilities = {

@@ -13,7 +13,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { ClaudeModelSelection } from "@t3tools/contracts";
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
 
-import { TextGenerationError } from "../Errors.ts";
+import { TextGenerationError } from "@t3tools/contracts";
 import { type TextGenerationShape, TextGeneration } from "../Services/TextGeneration.ts";
 import {
   buildBranchNamePrompt,
