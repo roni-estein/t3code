@@ -1,6 +1,7 @@
 import { type ContextMenuItem, type NativeApi } from "@t3tools/contracts";
 
 import { showContextMenuFallback } from "./contextMenuFallback";
+import { __resetWsRpcAtomClientForTests } from "./rpc/client";
 import { resetRequestLatencyStateForTests } from "./rpc/requestLatencyState";
 import { resetServerStateForTests } from "./rpc/serverState";
 import { resetWsConnectionStateForTests } from "./rpc/wsConnectionState";
@@ -8,8 +9,9 @@ import { __resetWsRpcClientForTests, getWsRpcClient } from "./wsRpcClient";
 
 let instance: { api: NativeApi } | null = null;
 
-export function __resetWsNativeApiForTests() {
+export async function __resetWsNativeApiForTests() {
   instance = null;
+  await __resetWsRpcAtomClientForTests();
   __resetWsRpcClientForTests();
   resetRequestLatencyStateForTests();
   resetServerStateForTests();

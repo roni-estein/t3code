@@ -3,7 +3,7 @@ import { Cause, Option } from "effect";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { describe, expect, it } from "vitest";
 
-import { deriveGitStatusState } from "./gitStatusState";
+import { deriveGitStatusState, pruneStatusByCwd } from "./gitStatusState";
 
 const BASE_STATUS: GitStatusResult = {
   isRepo: true,
@@ -57,5 +57,16 @@ describe("deriveGitStatusState", () => {
     expect(state.data).toEqual(BASE_STATUS);
     expect(state.error).toBe(error);
     expect(state.isPending).toBe(false);
+  });
+
+  it("prunes stale cwd entries when the tracked cwd list shrinks", () => {
+    const current = new Map<string, GitStatusResult>([
+      ["/repo/a", BASE_STATUS],
+      ["/repo/b", { ...BASE_STATUS, branch: "feature/other" }],
+    ]);
+
+    expect(pruneStatusByCwd(current, ["/repo/b"])).toEqual(
+      new Map([["/repo/b", { ...BASE_STATUS, branch: "feature/other" }]]),
+    );
   });
 });

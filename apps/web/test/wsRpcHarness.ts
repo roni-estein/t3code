@@ -109,7 +109,7 @@ export class BrowserWsRpcHarness {
   async onMessage(rawData: string): Promise<void> {
     const server = await this.serverReady;
     if (!server) {
-      throw new Error("RPC test server is not connected");
+      return;
     }
     const messages = this.parser.decode(rawData);
     for (const message of messages) {

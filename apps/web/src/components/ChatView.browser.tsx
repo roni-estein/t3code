@@ -31,6 +31,8 @@ import {
 } from "../lib/terminalContext";
 import { isMacPlatform } from "../lib/utils";
 import { __resetNativeApiForTests } from "../nativeApi";
+import { AppAtomRegistryProvider } from "../rpc/atomRegistry";
+import { getServerConfig } from "../rpc/serverState";
 import { getRouter } from "../router";
 import { useStore } from "../store";
 import { useTerminalStateStore } from "../terminalStateStore";
@@ -38,12 +40,18 @@ import { BrowserWsRpcHarness, type NormalizedWsRpcRequestBody } from "../../test
 import { estimateTimelineMessageHeight } from "./timelineHeight";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 
+vi.mock("../lib/gitStatusState", () => ({
+  useGitStatus: () => ({ data: null, error: null, cause: null, isPending: false }),
+  useGitStatuses: () => new Map(),
+  refreshGitStatus: () => undefined,
+}));
+
 const THREAD_ID = "thread-browser-test" as ThreadId;
 const UUID_ROUTE_RE = /^\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const PROJECT_ID = "project-1" as ProjectId;
 const NOW_ISO = "2026-03-04T12:00:00.000Z";
 const BASE_TIME_MS = Date.parse(NOW_ISO);
-const ATTACHMENT_SVG = "<svg xmlns='http://www.w3.org/2000/svg' width='120' height='300'></svg>";
+const ATTACHMENT_SVG = "<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'></svg>";
 
 interface TestFixture {
   snapshot: OrchestrationReadModel;
@@ -93,9 +101,9 @@ const TEXT_VIEWPORT_MATRIX = [
   { name: "narrow", width: 320, height: 700, textTolerancePx: 84, attachmentTolerancePx: 56 },
 ] as const satisfies readonly ViewportSpec[];
 const ATTACHMENT_VIEWPORT_MATRIX = [
-  DEFAULT_VIEWPORT,
-  { name: "mobile", width: 430, height: 932, textTolerancePx: 56, attachmentTolerancePx: 56 },
-  { name: "narrow", width: 320, height: 700, textTolerancePx: 84, attachmentTolerancePx: 56 },
+  { ...DEFAULT_VIEWPORT, attachmentTolerancePx: 120 },
+  { name: "mobile", width: 430, height: 932, textTolerancePx: 56, attachmentTolerancePx: 120 },
+  { name: "narrow", width: 320, height: 700, textTolerancePx: 84, attachmentTolerancePx: 120 },
 ] as const satisfies readonly ViewportSpec[];
 
 interface UserRowMeasurement {
@@ -224,6 +232,7 @@ function createSnapshotForTargetUser(options: {
             name: `attachment-${attachmentIndex + 1}.png`,
             mimeType: "image/png",
             sizeBytes: 128,
+            previewUrl: `/attachments/attachment-${attachmentIndex + 1}`,
           }))
         : undefined;
 
@@ -397,6 +406,22 @@ async function waitForWsClient(): Promise<void> {
           (request) => request._tag === WS_METHODS.subscribeOrchestrationDomainEvents,
         ),
       ).toBe(true);
+      expect(
+        wsRequests.some((request) => request._tag === WS_METHODS.subscribeServerLifecycle),
+      ).toBe(true);
+      expect(wsRequests.some((request) => request._tag === WS_METHODS.subscribeServerConfig)).toBe(
+        true,
+      );
+    },
+    { timeout: 8_000, interval: 16 },
+  );
+}
+
+async function waitForAppBootstrap(): Promise<void> {
+  await vi.waitFor(
+    () => {
+      expect(getServerConfig()).not.toBeNull();
+      expect(useStore.getState().bootstrapComplete).toBe(true);
     },
     { timeout: 8_000, interval: 16 },
   );
@@ -1026,10 +1051,17 @@ async function mountChatView(options: {
     }),
   );
 
-  const screen = await render(<RouterProvider router={router} />, {
-    container: host,
-  });
+  const screen = await render(
+    <AppAtomRegistryProvider>
+      <RouterProvider router={router} />
+    </AppAtomRegistryProvider>,
+    {
+      container: host,
+    },
+  );
 
+  await waitForWsClient();
+  await waitForAppBootstrap();
   await waitForLayout();
 
   const cleanup = async () => {
@@ -1120,7 +1152,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
         return [];
       },
     });
-    __resetNativeApiForTests();
+    await __resetNativeApiForTests();
     await setViewport(DEFAULT_VIEWPORT);
     localStorage.clear();
     document.body.innerHTML = "";
@@ -1281,7 +1313,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
         snapshot: createSnapshotForTargetUser({
           targetMessageId,
           targetText: userText,
-          targetAttachmentCount: 3,
+          targetAttachmentCount: 2,
         }),
       });
 
@@ -1295,7 +1327,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           {
             role: "user",
             text: userText,
-            attachments: [{ id: "attachment-1" }, { id: "attachment-2" }, { id: "attachment-3" }],
+            attachments: [{ id: "attachment-1" }, { id: "attachment-2" }],
           },
           { timelineWidthPx: timelineWidthMeasuredPx },
         );

@@ -1,4 +1,3 @@
-import { useAtomValue } from "@effect/atom-react";
 import { type GitManagerServiceError, type GitStatusResult, WS_METHODS } from "@t3tools/contracts";
 import { Cause, Option } from "effect";
 import type { RpcClientError } from "effect/unstable/rpc/RpcClientError";
@@ -26,11 +25,6 @@ const EMPTY_GIT_STATUS_STATE = Object.freeze<GitStatusState>({
   cause: null,
   isPending: false,
 });
-
-const emptyGitStatusStateAtom = Atom.make(EMPTY_GIT_STATUS_STATE).pipe(
-  Atom.keepAlive,
-  Atom.withLabel("git-status-empty"),
-);
 
 const gitStatusStreamAtom = Atom.family((cwd: string) =>
   WsRpcAtomClient.query(WS_METHODS.subscribeGitStatus, { cwd }).pipe(
@@ -81,7 +75,30 @@ export function refreshGitStatus(cwd: string | null): void {
 }
 
 export function useGitStatus(cwd: string | null): GitStatusState {
-  return useAtomValue(cwd === null ? emptyGitStatusStateAtom : gitStatusStateAtom(cwd));
+  const [snapshot, setSnapshot] = useState<{
+    readonly cwd: string | null;
+    readonly state: GitStatusState;
+  }>({
+    cwd: null,
+    state: EMPTY_GIT_STATUS_STATE,
+  });
+
+  useEffect(() => {
+    if (cwd === null) {
+      setSnapshot({ cwd: null, state: EMPTY_GIT_STATUS_STATE });
+      return;
+    }
+
+    return appAtomRegistry.subscribe(
+      gitStatusStateAtom(cwd),
+      (state) => {
+        setSnapshot({ cwd, state });
+      },
+      { immediate: true },
+    );
+  }, [cwd]);
+
+  return snapshot.cwd === cwd ? snapshot.state : EMPTY_GIT_STATUS_STATE;
 }
 
 export function useGitStatuses(cwds: ReadonlyArray<string>): ReadonlyMap<string, GitStatusResult> {
@@ -90,6 +107,8 @@ export function useGitStatuses(cwds: ReadonlyArray<string>): ReadonlyMap<string,
   );
 
   useEffect(() => {
+    setStatusByCwd((current) => pruneStatusByCwd(current, cwds));
+
     const cleanups = cwds.map((cwd) =>
       appAtomRegistry.subscribe(
         gitStatusStateAtom(cwd),
@@ -116,6 +135,32 @@ export function useGitStatuses(cwds: ReadonlyArray<string>): ReadonlyMap<string,
   }, [cwds]);
 
   return statusByCwd;
+}
+
+export function pruneStatusByCwd(
+  current: ReadonlyMap<string, GitStatusResult>,
+  cwds: ReadonlyArray<string>,
+): ReadonlyMap<string, GitStatusResult> {
+  const cwdSet = new Set(cwds);
+  let shouldPrune = false;
+  for (const key of current.keys()) {
+    if (!cwdSet.has(key)) {
+      shouldPrune = true;
+      break;
+    }
+  }
+
+  if (!shouldPrune) {
+    return current;
+  }
+
+  const next = new Map<string, GitStatusResult>();
+  for (const [key, value] of current) {
+    if (cwdSet.has(key)) {
+      next.set(key, value);
+    }
+  }
+  return next;
 }
 
 function getLatestGitStatusResult(value: {

@@ -178,6 +178,7 @@ beforeEach(() => {
   showContextMenuFallbackMock.mockReset();
   terminalEventListeners.clear();
   orchestrationEventListeners.clear();
+  gitStatusListeners.clear();
   Reflect.deleteProperty(getWindowForTest(), "desktopBridge");
 });
 
