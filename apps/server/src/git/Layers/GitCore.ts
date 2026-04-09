@@ -54,6 +54,33 @@ const STATUS_UPSTREAM_REFRESH_CACHE_CAPACITY = 2_048;
 const DEFAULT_BASE_BRANCH_CANDIDATES = ["main", "master"] as const;
 const GIT_LIST_BRANCHES_DEFAULT_LIMIT = 100;
 
+/**
+ * Negative cache for worktree paths that are known to be missing.
+ * Prevents repeated stat() calls on deleted worktree directories,
+ * which can create a tight ENOENT error loop with growing fiber IDs.
+ * Entries expire after 5 minutes so that re-created paths are picked up.
+ */
+const MISSING_WORKTREE_CACHE_TTL_MS = 5 * 60 * 1000;
+const missingWorktreePaths = new Map<string, number>();
+
+function isWorktreePathKnownMissing(path: string): boolean {
+  const cachedAt = missingWorktreePaths.get(path);
+  if (cachedAt === undefined) return false;
+  if (Date.now() - cachedAt > MISSING_WORKTREE_CACHE_TTL_MS) {
+    missingWorktreePaths.delete(path);
+    return false;
+  }
+  return true;
+}
+
+function markWorktreePathMissing(path: string): void {
+  missingWorktreePaths.set(path, Date.now());
+}
+
+function markWorktreePathPresent(path: string): void {
+  missingWorktreePaths.delete(path);
+}
+
 type TraceTailState = {
   processedChars: number;
   remainder: string;
@@ -1805,10 +1832,21 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
       for (const line of worktreeList.stdout.split("\n")) {
         if (line.startsWith("worktree ")) {
           const candidatePath = line.slice("worktree ".length);
-          const exists = yield* fileSystem.stat(candidatePath).pipe(
-            Effect.map(() => true),
-            Effect.catch(() => Effect.succeed(false)),
-          );
+          let exists: boolean;
+          if (isWorktreePathKnownMissing(candidatePath)) {
+            exists = false;
+          } else {
+            exists = yield* fileSystem.stat(candidatePath).pipe(
+              Effect.map(() => {
+                markWorktreePathPresent(candidatePath);
+                return true;
+              }),
+              Effect.catch(() => {
+                markWorktreePathMissing(candidatePath);
+                return Effect.succeed(false);
+              }),
+            );
+          }
           currentPath = exists ? candidatePath : null;
         } else if (line.startsWith("branch refs/heads/") && currentPath) {
           worktreeMap.set(line.slice("branch refs/heads/".length), currentPath);
