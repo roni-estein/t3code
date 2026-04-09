@@ -287,8 +287,9 @@ function captureBackendOutput(child: ChildProcess.ChildProcess): void {
 
 initializePackagedLogging();
 
-// Cap the renderer's V8 heap to 2 GB so GC runs more aggressively
-// instead of growing to 3.7 GB+ and crashing with OOM.
+// Cap V8 heap to 2 GB so GC runs more aggressively instead of
+// growing to 3.7 GB+ and crashing with OOM. This applies to both
+// the main process and all renderer/utility child processes.
 app.commandLine.appendSwitch("js-flags", "--max-old-space-size=2048");
 
 if (process.platform === "linux") {
@@ -1358,6 +1359,10 @@ function createWindow(): BrowserWindow {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      // Ensure the renderer's V8 heap is capped at 2 GB to prevent OOM crashes.
+      // app.commandLine.appendSwitch("js-flags", ...) alone doesn't propagate
+      // to sandboxed renderer processes reliably.
+      additionalArguments: ["--js-flags=--max-old-space-size=2048"],
     },
   });
 
