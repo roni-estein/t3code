@@ -47,12 +47,20 @@ function toPersistedSavedEnvironmentRecord(
   };
 }
 
+function valuesOfSavedEnvironmentRegistry(
+  byId: Record<EnvironmentId, SavedEnvironmentRecord>,
+): ReadonlyArray<SavedEnvironmentRecord> {
+  return Object.values(byId) as ReadonlyArray<SavedEnvironmentRecord>;
+}
+
 function persistSavedEnvironmentRegistryState(
   byId: Record<EnvironmentId, SavedEnvironmentRecord>,
 ): void {
   void ensureLocalApi()
     .persistence.setSavedEnvironmentRegistry(
-      Object.values(byId).map((record) => toPersistedSavedEnvironmentRecord(record)),
+      valuesOfSavedEnvironmentRegistry(byId).map((record) =>
+        toPersistedSavedEnvironmentRecord(record),
+      ),
     )
     .catch((error) => {
       console.error("[SAVED_ENVIRONMENTS] persist failed", error);
@@ -193,7 +201,18 @@ export function resolveEnvironmentHttpUrl(input: {
 export function resetSavedEnvironmentRegistryStoreForTests() {
   savedEnvironmentRegistryHydrated = false;
   savedEnvironmentRegistryHydrationPromise = null;
-  useSavedEnvironmentRegistryStore.getState().reset();
+  useSavedEnvironmentRegistryStore.setState({ byId: {} });
+}
+
+export async function persistSavedEnvironmentRecord(record: SavedEnvironmentRecord): Promise<void> {
+  const byId = {
+    ...useSavedEnvironmentRegistryStore.getState().byId,
+    [record.environmentId]: record,
+  };
+
+  await ensureLocalApi().persistence.setSavedEnvironmentRegistry(
+    valuesOfSavedEnvironmentRegistry(byId).map((entry) => toPersistedSavedEnvironmentRecord(entry)),
+  );
 }
 
 export async function readSavedEnvironmentBearerToken(

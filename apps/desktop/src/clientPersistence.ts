@@ -14,7 +14,6 @@ interface PersistedSavedEnvironmentStorageRecord extends PersistedSavedEnvironme
 
 interface SavedEnvironmentRegistryDocument {
   readonly records: readonly PersistedSavedEnvironmentStorageRecord[];
-  readonly encryptedBearerTokenById: Readonly<Record<string, string>>;
 }
 
 export interface DesktopSecretStorage {
@@ -60,23 +59,13 @@ function isPersistedSavedEnvironmentStorageRecord(
 function readSavedEnvironmentRegistryDocument(filePath: string): SavedEnvironmentRegistryDocument {
   const parsed = readJsonFile<SavedEnvironmentRegistryDocument>(filePath);
   if (!Predicate.isObject(parsed)) {
-    return { records: [], encryptedBearerTokenById: {} };
+    return { records: [] };
   }
 
-  const records = Array.isArray(parsed.records)
-    ? parsed.records.filter(isPersistedSavedEnvironmentStorageRecord)
-    : [];
-  const encryptedBearerTokenById = Predicate.isObject(parsed.encryptedBearerTokenById)
-    ? Object.fromEntries(
-        Object.entries(parsed.encryptedBearerTokenById).filter(
-          (entry): entry is [string, string] => typeof entry[1] === "string",
-        ),
-      )
-    : {};
-
   return {
-    records,
-    encryptedBearerTokenById,
+    records: Array.isArray(parsed.records)
+      ? parsed.records.filter(isPersistedSavedEnvironmentStorageRecord)
+      : [],
   };
 }
 
@@ -114,10 +103,28 @@ export function writeSavedEnvironmentRegistry(
   records: readonly PersistedSavedEnvironmentRecord[],
 ): void {
   const currentDocument = readSavedEnvironmentRegistryDocument(registryPath);
-  const encryptedBearerTokenById = currentDocument.encryptedBearerTokenById;
+  const encryptedBearerTokenById = new Map(
+    currentDocument.records.flatMap((record) =>
+      record.encryptedBearerToken
+        ? [[record.environmentId, record.encryptedBearerToken] as const]
+        : [],
+    ),
+  );
   writeJsonFile(registryPath, {
-    records,
-    encryptedBearerTokenById,
+    records: records.map((record) => {
+      const encryptedBearerToken = encryptedBearerTokenById.get(record.environmentId);
+      return encryptedBearerToken
+        ? {
+            environmentId: record.environmentId,
+            label: record.label,
+            httpBaseUrl: record.httpBaseUrl,
+            wsBaseUrl: record.wsBaseUrl,
+            createdAt: record.createdAt,
+            lastConnectedAt: record.lastConnectedAt,
+            encryptedBearerToken,
+          }
+        : record;
+    }),
   } satisfies SavedEnvironmentRegistryDocument);
 }
 
@@ -127,7 +134,9 @@ export function readSavedEnvironmentSecret(input: {
   readonly secretStorage: DesktopSecretStorage;
 }): string | null {
   const document = readSavedEnvironmentRegistryDocument(input.registryPath);
-  const encoded = document.encryptedBearerTokenById[input.environmentId];
+  const encoded = document.records.find(
+    (record) => record.environmentId === input.environmentId,
+  )?.encryptedBearerToken;
   if (!encoded) {
     return null;
   }
@@ -155,14 +164,30 @@ export function writeSavedEnvironmentSecret(input: {
     return false;
   }
 
+  let found = false;
+
   writeJsonFile(input.registryPath, {
-    records: document.records.map((record) => toPersistedSavedEnvironmentRecord(record)),
-    encryptedBearerTokenById: {
-      ...document.encryptedBearerTokenById,
-      [input.environmentId]: input.secretStorage.encryptString(input.secret).toString("base64"),
-    },
+    records: document.records.map((record) => {
+      if (record.environmentId !== input.environmentId) {
+        return record;
+      }
+
+      found = true;
+      const encryptedBearerToken = input.secretStorage
+        .encryptString(input.secret)
+        .toString("base64");
+      return {
+        environmentId: record.environmentId,
+        label: record.label,
+        httpBaseUrl: record.httpBaseUrl,
+        wsBaseUrl: record.wsBaseUrl,
+        createdAt: record.createdAt,
+        lastConnectedAt: record.lastConnectedAt,
+        encryptedBearerToken,
+      } satisfies PersistedSavedEnvironmentStorageRecord;
+    }),
   } satisfies SavedEnvironmentRegistryDocument);
-  return true;
+  return found;
 }
 
 export function removeSavedEnvironmentSecret(input: {
@@ -170,13 +195,22 @@ export function removeSavedEnvironmentSecret(input: {
   readonly environmentId: string;
 }): void {
   const document = readSavedEnvironmentRegistryDocument(input.registryPath);
-  if (!(input.environmentId in document.encryptedBearerTokenById)) {
+  if (
+    !document.records.some(
+      (record) =>
+        record.environmentId === input.environmentId && record.encryptedBearerToken !== undefined,
+    )
+  ) {
     return;
   }
 
-  const { [input.environmentId]: _removed, ...remaining } = document.encryptedBearerTokenById;
   writeJsonFile(input.registryPath, {
-    records: document.records.map((record) => toPersistedSavedEnvironmentRecord(record)),
-    encryptedBearerTokenById: remaining,
+    records: document.records.map((record) => {
+      if (record.environmentId !== input.environmentId) {
+        return record;
+      }
+
+      return toPersistedSavedEnvironmentRecord(record);
+    }),
   } satisfies SavedEnvironmentRegistryDocument);
 }

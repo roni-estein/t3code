@@ -1,7 +1,7 @@
 import {
   ClientSettingsSchema,
-  type ClientSettings,
   EnvironmentId,
+  type ClientSettings,
   type EnvironmentId as EnvironmentIdValue,
   type PersistedSavedEnvironmentRecord,
 } from "@t3tools/contracts";
@@ -12,20 +12,6 @@ import { getLocalStorageItem, setLocalStorageItem } from "./hooks/useLocalStorag
 export const CLIENT_SETTINGS_STORAGE_KEY = "t3code:client-settings:v1";
 export const SAVED_ENVIRONMENT_REGISTRY_STORAGE_KEY = "t3code:saved-environment-registry:v1";
 
-interface BrowserSavedEnvironmentRecord extends PersistedSavedEnvironmentRecord {
-  readonly bearerToken?: string;
-}
-
-interface BrowserSavedEnvironmentRegistryState {
-  readonly byId?: Record<string, unknown>;
-  readonly secretsById?: Record<string, string>;
-}
-
-interface BrowserSavedEnvironmentRegistryDocument {
-  readonly state?: BrowserSavedEnvironmentRegistryState;
-  readonly version?: number;
-}
-
 const BrowserSavedEnvironmentRecordSchema = Schema.Struct({
   environmentId: EnvironmentId,
   label: Schema.String,
@@ -35,33 +21,17 @@ const BrowserSavedEnvironmentRecordSchema = Schema.Struct({
   lastConnectedAt: Schema.NullOr(Schema.String),
   bearerToken: Schema.optionalKey(Schema.String),
 });
+type BrowserSavedEnvironmentRecord = typeof BrowserSavedEnvironmentRecordSchema.Type;
 
 const BrowserSavedEnvironmentRegistryDocumentSchema = Schema.Struct({
   version: Schema.optionalKey(Schema.Number),
-  state: Schema.optionalKey(
-    Schema.Struct({
-      byId: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
-      secretsById: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
-    }),
-  ),
+  records: Schema.optionalKey(Schema.Array(BrowserSavedEnvironmentRecordSchema)),
 });
-
-const decodeBrowserSavedEnvironmentRecord = Schema.decodeUnknownSync(
-  BrowserSavedEnvironmentRecordSchema,
-);
+type BrowserSavedEnvironmentRegistryDocument =
+  typeof BrowserSavedEnvironmentRegistryDocumentSchema.Type;
 
 function hasWindow(): boolean {
   return typeof window !== "undefined";
-}
-
-function normalizeBrowserSavedEnvironmentRecord(
-  value: unknown,
-): BrowserSavedEnvironmentRecord | null {
-  try {
-    return decodeBrowserSavedEnvironmentRecord(value);
-  } catch {
-    return null;
-  }
 }
 
 function toPersistedSavedEnvironmentRecord(
@@ -103,12 +73,11 @@ function readBrowserSavedEnvironmentRegistryDocument(): BrowserSavedEnvironmentR
   }
 
   try {
-    return (
-      getLocalStorageItem(
-        SAVED_ENVIRONMENT_REGISTRY_STORAGE_KEY,
-        BrowserSavedEnvironmentRegistryDocumentSchema,
-      ) ?? {}
+    const parsed = getLocalStorageItem(
+      SAVED_ENVIRONMENT_REGISTRY_STORAGE_KEY,
+      BrowserSavedEnvironmentRegistryDocumentSchema,
     );
+    return parsed ?? {};
   } catch {
     return {};
   }
@@ -129,31 +98,7 @@ function writeBrowserSavedEnvironmentRegistryDocument(
 }
 
 function readBrowserSavedEnvironmentRecordsWithSecrets(): ReadonlyArray<BrowserSavedEnvironmentRecord> {
-  const state = readBrowserSavedEnvironmentRegistryDocument().state;
-  const byId = state?.byId ?? {};
-  const secretsById = state?.secretsById ?? {};
-  return Object.values(byId).flatMap((record) => {
-    const normalizedRecord = normalizeBrowserSavedEnvironmentRecord(record);
-    if (!normalizedRecord) {
-      return [];
-    }
-
-    const bearerToken =
-      typeof secretsById[normalizedRecord.environmentId] === "string" &&
-      secretsById[normalizedRecord.environmentId]
-        ? secretsById[normalizedRecord.environmentId]
-        : typeof normalizedRecord.bearerToken === "string" &&
-            normalizedRecord.bearerToken.length > 0
-          ? normalizedRecord.bearerToken
-          : null;
-
-    return [
-      {
-        ...normalizedRecord,
-        ...(bearerToken ? { bearerToken } : {}),
-      } satisfies BrowserSavedEnvironmentRecord,
-    ];
-  });
+  return readBrowserSavedEnvironmentRegistryDocument().records ?? [];
 }
 
 function writeBrowserSavedEnvironmentRecords(
@@ -161,14 +106,7 @@ function writeBrowserSavedEnvironmentRecords(
 ): void {
   writeBrowserSavedEnvironmentRegistryDocument({
     version: 1,
-    state: {
-      byId: Object.fromEntries(records.map((record) => [record.environmentId, record])),
-      secretsById: Object.fromEntries(
-        records.flatMap((record) =>
-          record.bearerToken ? [[record.environmentId, record.bearerToken] as const] : [],
-        ),
-      ),
-    },
+    records,
   });
 }
 
@@ -181,37 +119,32 @@ export function readBrowserSavedEnvironmentRegistry(): ReadonlyArray<PersistedSa
 export function writeBrowserSavedEnvironmentRegistry(
   records: ReadonlyArray<PersistedSavedEnvironmentRecord>,
 ): void {
-  const document = readBrowserSavedEnvironmentRegistryDocument();
-  const directSecretsById = document.state?.secretsById ?? {};
   const existing = new Map(
     readBrowserSavedEnvironmentRecordsWithSecrets().map(
       (record) => [record.environmentId, record] as const,
     ),
   );
   writeBrowserSavedEnvironmentRecords(
-    records.map((record) => ({
-      ...record,
-      ...((existing.get(record.environmentId)?.bearerToken ??
-      directSecretsById[record.environmentId])
+    records.map((record) => {
+      const bearerToken = existing.get(record.environmentId)?.bearerToken;
+      return bearerToken
         ? {
-            bearerToken:
-              existing.get(record.environmentId)?.bearerToken ??
-              directSecretsById[record.environmentId],
+            environmentId: record.environmentId,
+            label: record.label,
+            httpBaseUrl: record.httpBaseUrl,
+            wsBaseUrl: record.wsBaseUrl,
+            createdAt: record.createdAt,
+            lastConnectedAt: record.lastConnectedAt,
+            bearerToken,
           }
-        : {}),
-    })),
+        : toPersistedSavedEnvironmentRecord(record);
+    }),
   );
 }
 
 export function readBrowserSavedEnvironmentSecret(
   environmentId: EnvironmentIdValue,
 ): string | null {
-  const state = readBrowserSavedEnvironmentRegistryDocument().state;
-  const directSecret = state?.secretsById?.[environmentId];
-  if (typeof directSecret === "string" && directSecret.length > 0) {
-    return directSecret;
-  }
-
   return (
     readBrowserSavedEnvironmentRecordsWithSecrets().find(
       (record) => record.environmentId === environmentId,
@@ -224,48 +157,38 @@ export function writeBrowserSavedEnvironmentSecret(
   secret: string,
 ): boolean {
   const document = readBrowserSavedEnvironmentRegistryDocument();
-  const state = document.state ?? {};
-  const byId = state.byId ?? {};
-  const existingRecord = normalizeBrowserSavedEnvironmentRecord(byId[environmentId]);
+  const records = document.records ?? [];
+  let found = false;
   writeBrowserSavedEnvironmentRegistryDocument({
     version: document.version ?? 1,
-    state: {
-      byId: existingRecord
-        ? {
-            ...byId,
-            [environmentId]: {
-              ...existingRecord,
-              bearerToken: secret,
-            },
-          }
-        : byId,
-      secretsById: {
-        ...state.secretsById,
-        [environmentId]: secret,
-      },
-    },
+    records: records.map((record) => {
+      if (record.environmentId !== environmentId) {
+        return record;
+      }
+      found = true;
+      return {
+        environmentId: record.environmentId,
+        label: record.label,
+        httpBaseUrl: record.httpBaseUrl,
+        wsBaseUrl: record.wsBaseUrl,
+        createdAt: record.createdAt,
+        lastConnectedAt: record.lastConnectedAt,
+        bearerToken: secret,
+      } satisfies BrowserSavedEnvironmentRecord;
+    }),
   });
-  return true;
+  return found;
 }
 
 export function removeBrowserSavedEnvironmentSecret(environmentId: EnvironmentIdValue): void {
   const document = readBrowserSavedEnvironmentRegistryDocument();
-  const state = document.state ?? {};
-  const byId = { ...state.byId };
-  const existingRecord = normalizeBrowserSavedEnvironmentRecord(byId[environmentId]);
-  const nextById = existingRecord
-    ? {
-        ...byId,
-        [environmentId]: toPersistedSavedEnvironmentRecord(existingRecord),
-      }
-    : byId;
-  const { [environmentId]: _removed, ...remainingSecrets } = state.secretsById ?? {};
-
   writeBrowserSavedEnvironmentRegistryDocument({
     version: document.version ?? 1,
-    state: {
-      byId: nextById,
-      secretsById: remainingSecrets,
-    },
+    records: (document.records ?? []).map((record) => {
+      if (record.environmentId !== environmentId) {
+        return record;
+      }
+      return toPersistedSavedEnvironmentRecord(record);
+    }),
   });
 }

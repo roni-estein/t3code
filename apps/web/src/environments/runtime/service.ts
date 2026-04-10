@@ -39,6 +39,7 @@ import {
   getSavedEnvironmentRecord,
   hasSavedEnvironmentRegistryHydrated,
   listSavedEnvironmentRecords,
+  persistSavedEnvironmentRecord,
   readSavedEnvironmentBearerToken,
   removeSavedEnvironmentBearerToken,
   type SavedEnvironmentRecord,
@@ -612,6 +613,7 @@ export async function addSavedEnvironment(input: {
     lastConnectedAt: isoNow(),
   };
 
+  await persistSavedEnvironmentRecord(record);
   await writeSavedEnvironmentBearerToken(environmentId, bearerSession.sessionToken);
   await ensureSavedEnvironmentConnection(record, {
     bearerToken: bearerSession.sessionToken,

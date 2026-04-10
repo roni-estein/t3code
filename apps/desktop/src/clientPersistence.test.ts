@@ -87,6 +87,8 @@ describe("clientPersistence", () => {
     const registryPath = makeTempPath("saved-environments.json");
     const secretStorage = makeSecretStorage(true);
 
+    writeSavedEnvironmentRegistry(registryPath, [savedRegistryRecord]);
+
     expect(
       writeSavedEnvironmentSecret({
         registryPath,
@@ -103,11 +105,22 @@ describe("clientPersistence", () => {
         secretStorage,
       }),
     ).toBe("bearer-token");
+
+    expect(JSON.parse(fs.readFileSync(registryPath, "utf8"))).toEqual({
+      records: [
+        {
+          ...savedRegistryRecord,
+          encryptedBearerToken: Buffer.from("enc:bearer-token", "utf8").toString("base64"),
+        },
+      ],
+    });
   });
 
   it("preserves existing secrets when encryption is unavailable", () => {
     const registryPath = makeTempPath("saved-environments.json");
     const availableSecretStorage = makeSecretStorage(true);
+
+    writeSavedEnvironmentRegistry(registryPath, [savedRegistryRecord]);
 
     writeSavedEnvironmentSecret({
       registryPath,
@@ -137,6 +150,8 @@ describe("clientPersistence", () => {
   it("removes saved environment secrets", () => {
     const registryPath = makeTempPath("saved-environments.json");
     const secretStorage = makeSecretStorage(true);
+
+    writeSavedEnvironmentRegistry(registryPath, [savedRegistryRecord]);
 
     writeSavedEnvironmentSecret({
       registryPath,
@@ -179,9 +194,24 @@ describe("clientPersistence", () => {
     ).not.toThrow();
   });
 
+  it("returns false when writing a secret without metadata", () => {
+    const registryPath = makeTempPath("saved-environments.json");
+
+    expect(
+      writeSavedEnvironmentSecret({
+        registryPath,
+        environmentId: savedRegistryRecord.environmentId,
+        secret: "bearer-token",
+        secretStorage: makeSecretStorage(true),
+      }),
+    ).toBe(false);
+  });
+
   it("preserves encrypted secrets when metadata is rewritten", () => {
     const registryPath = makeTempPath("saved-environments.json");
     const secretStorage = makeSecretStorage(true);
+
+    writeSavedEnvironmentRegistry(registryPath, [savedRegistryRecord]);
 
     writeSavedEnvironmentSecret({
       registryPath,
