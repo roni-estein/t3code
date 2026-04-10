@@ -105,7 +105,7 @@ describe("clientPersistence", () => {
     ).toBe("bearer-token");
   });
 
-  it("drops persisted secrets when encryption is unavailable", () => {
+  it("preserves existing secrets when encryption is unavailable", () => {
     const secretsPath = makeTempPath("saved-environment-secrets.json");
     const availableSecretStorage = makeSecretStorage(true);
 
@@ -131,7 +131,7 @@ describe("clientPersistence", () => {
         environmentId: savedRegistryRecord.environmentId,
         secretStorage: availableSecretStorage,
       }),
-    ).toBeNull();
+    ).toBe("bearer-token");
   });
 
   it("removes saved environment secrets", () => {
@@ -157,5 +157,25 @@ describe("clientPersistence", () => {
         secretStorage,
       }),
     ).toBeNull();
+  });
+
+  it("treats malformed secrets documents as empty", () => {
+    const secretsPath = makeTempPath("saved-environment-secrets.json");
+    fs.writeFileSync(secretsPath, "{}\n", "utf8");
+
+    expect(
+      readSavedEnvironmentSecret({
+        secretsPath,
+        environmentId: savedRegistryRecord.environmentId,
+        secretStorage: makeSecretStorage(true),
+      }),
+    ).toBeNull();
+
+    expect(() =>
+      removeSavedEnvironmentSecret({
+        secretsPath,
+        environmentId: savedRegistryRecord.environmentId,
+      }),
+    ).not.toThrow();
   });
 });

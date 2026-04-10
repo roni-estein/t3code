@@ -42,6 +42,7 @@ const CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE = "[CLIENT_SETTINGS]";
 
 const clientSettingsListeners = new Set<() => void>();
 let clientSettingsSnapshot = DEFAULT_CLIENT_SETTINGS;
+let clientSettingsHydrated = false;
 let clientSettingsHydrationPromise: Promise<void> | null = null;
 
 function emitClientSettingsChange() {
@@ -68,6 +69,9 @@ function subscribeClientSettings(listener: () => void): () => void {
 }
 
 async function hydrateClientSettings(): Promise<void> {
+  if (clientSettingsHydrated) {
+    return;
+  }
   if (clientSettingsHydrationPromise) {
     return clientSettingsHydrationPromise;
   }
@@ -81,14 +85,17 @@ async function hydrateClientSettings(): Promise<void> {
       }
     } catch (error) {
       console.error(`${CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE} hydrate failed`, error);
+    } finally {
+      clientSettingsHydrated = true;
     }
   })();
 
-  clientSettingsHydrationPromise = nextHydration.finally(() => {
-    if (clientSettingsHydrationPromise === nextHydration) {
+  const hydrationPromise = nextHydration.finally(() => {
+    if (clientSettingsHydrationPromise === hydrationPromise) {
       clientSettingsHydrationPromise = null;
     }
   });
+  clientSettingsHydrationPromise = hydrationPromise;
 
   return clientSettingsHydrationPromise;
 }
@@ -319,4 +326,11 @@ export function migrateLocalSettingsToServer(): void {
     // Remove the legacy key regardless to keep migration one-shot behavior.
     localStorage.removeItem(OLD_SETTINGS_KEY);
   }
+}
+
+export function __resetClientSettingsPersistenceForTests(): void {
+  clientSettingsSnapshot = DEFAULT_CLIENT_SETTINGS;
+  clientSettingsHydrated = false;
+  clientSettingsHydrationPromise = null;
+  clientSettingsListeners.clear();
 }

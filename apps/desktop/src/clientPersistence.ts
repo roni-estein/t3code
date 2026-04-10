@@ -2,6 +2,7 @@ import * as FS from "node:fs";
 import * as Path from "node:path";
 
 import type { ClientSettings, PersistedSavedEnvironmentRecord } from "@t3tools/contracts";
+import { Predicate } from "effect";
 
 interface ClientSettingsDocument {
   readonly settings: ClientSettings;
@@ -41,7 +42,8 @@ function writeJsonFile(filePath: string, value: unknown): void {
 }
 
 function readSecretsDocument(filePath: string): SavedEnvironmentSecretsDocument {
-  return readJsonFile<SavedEnvironmentSecretsDocument>(filePath) ?? { byId: {} };
+  const parsed = readJsonFile<SavedEnvironmentSecretsDocument>(filePath);
+  return Predicate.isObject(parsed) && Predicate.isObject(parsed.byId) ? parsed : { byId: {} };
 }
 
 export function readClientSettings(settingsPath: string): ClientSettings | null {
@@ -96,7 +98,6 @@ export function writeSavedEnvironmentSecret(input: {
   const { [input.environmentId]: _previous, ...remaining } = document.byId;
 
   if (!input.secretStorage.isEncryptionAvailable()) {
-    writeJsonFile(input.secretsPath, { byId: remaining } satisfies SavedEnvironmentSecretsDocument);
     return false;
   }
 
@@ -114,7 +115,7 @@ export function removeSavedEnvironmentSecret(input: {
   readonly environmentId: string;
 }): void {
   const document = readSecretsDocument(input.secretsPath);
-  if (!(input.environmentId in document.byId)) {
+  if (!(Predicate.isObject(document.byId) && input.environmentId in document.byId)) {
     return;
   }
 

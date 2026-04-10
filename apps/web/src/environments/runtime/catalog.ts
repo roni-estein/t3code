@@ -95,11 +95,12 @@ async function hydrateSavedEnvironmentRegistry(): Promise<void> {
     }
   })();
 
-  savedEnvironmentRegistryHydrationPromise = nextHydration.finally(() => {
-    if (savedEnvironmentRegistryHydrationPromise === nextHydration) {
+  const hydrationPromise = nextHydration.finally(() => {
+    if (savedEnvironmentRegistryHydrationPromise === hydrationPromise) {
       savedEnvironmentRegistryHydrationPromise = null;
     }
   });
+  savedEnvironmentRegistryHydrationPromise = hydrationPromise;
 
   return savedEnvironmentRegistryHydrationPromise;
 }
