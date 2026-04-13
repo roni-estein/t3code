@@ -2,13 +2,10 @@ import { describe, expect, it } from "vitest";
 import type * as EffectAcpSchema from "effect-acp/schema";
 
 import {
-  buildCursorDiscoveredModelsCacheKey,
   buildCursorCapabilitiesFromConfigOptions,
   buildCursorDiscoveredModelsFromConfigOptions,
-  getFreshCursorDiscoveredModelsFromCache,
   getCursorFallbackModels,
   getCursorParameterizedModelPickerUnsupportedMessage,
-  mergeCursorDiscoveredModelsWithCachedCapabilities,
   parseCursorAboutOutput,
   parseCursorCliConfigChannel,
   parseCursorVersionDate,
@@ -200,112 +197,6 @@ describe("getCursorFallbackModels", () => {
         customModels: ["internal/cursor-model"],
       }).map((model) => model.slug),
     ).toEqual(["internal/cursor-model"]);
-  });
-});
-
-describe("Cursor discovered model cache helpers", () => {
-  it("reuses discovered Cursor models while the cache entry is fresh", () => {
-    const models = buildCursorDiscoveredModelsFromConfigOptions(sessionNewCursorConfigOptions);
-    const cacheKey = buildCursorDiscoveredModelsCacheKey({
-      binaryPath: "/usr/local/bin/agent",
-      apiEndpoint: "http://localhost:3000",
-      version: "2026.04.13-abcd123",
-    });
-
-    expect(
-      getFreshCursorDiscoveredModelsFromCache({
-        cache: {
-          cacheKey,
-          expiresAtMs: 20_000,
-          models,
-        },
-        cacheKey,
-        nowMs: 10_000,
-      }),
-    ).toEqual(models);
-  });
-
-  it("ignores expired or mismatched Cursor model cache entries", () => {
-    const models = buildCursorDiscoveredModelsFromConfigOptions(sessionNewCursorConfigOptions);
-
-    expect(
-      getFreshCursorDiscoveredModelsFromCache({
-        cache: {
-          cacheKey: "a",
-          expiresAtMs: 5_000,
-          models,
-        },
-        cacheKey: "a",
-        nowMs: 5_000,
-      }),
-    ).toBeUndefined();
-    expect(
-      getFreshCursorDiscoveredModelsFromCache({
-        cache: {
-          cacheKey: "a",
-          expiresAtMs: 10_000,
-          models,
-        },
-        cacheKey: "b",
-        nowMs: 1_000,
-      }),
-    ).toBeUndefined();
-  });
-
-  it("fills missing discovered Cursor capabilities from the last cached snapshot", () => {
-    expect(
-      mergeCursorDiscoveredModelsWithCachedCapabilities(
-        [
-          {
-            slug: "claude-opus-4-6",
-            name: "Opus 4.6",
-            isCustom: false,
-            capabilities: {
-              reasoningEffortLevels: [],
-              supportsFastMode: false,
-              supportsThinkingToggle: false,
-              contextWindowOptions: [],
-              promptInjectedEffortLevels: [],
-            },
-          },
-        ],
-        [
-          {
-            slug: "claude-opus-4-6",
-            name: "Opus 4.6",
-            isCustom: false,
-            capabilities: {
-              reasoningEffortLevels: [
-                { value: "medium", label: "Medium" },
-                { value: "high", label: "High", isDefault: true },
-                { value: "max", label: "Max" },
-              ],
-              supportsFastMode: true,
-              supportsThinkingToggle: true,
-              contextWindowOptions: [{ value: "200k", label: "200K", isDefault: true }],
-              promptInjectedEffortLevels: [],
-            },
-          },
-        ],
-      ),
-    ).toEqual([
-      {
-        slug: "claude-opus-4-6",
-        name: "Opus 4.6",
-        isCustom: false,
-        capabilities: {
-          reasoningEffortLevels: [
-            { value: "medium", label: "Medium" },
-            { value: "high", label: "High", isDefault: true },
-            { value: "max", label: "Max" },
-          ],
-          supportsFastMode: true,
-          supportsThinkingToggle: true,
-          contextWindowOptions: [{ value: "200k", label: "200K", isDefault: true }],
-          promptInjectedEffortLevels: [],
-        },
-      },
-    ]);
   });
 });
 
