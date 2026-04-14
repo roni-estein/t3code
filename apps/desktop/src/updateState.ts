@@ -36,11 +36,11 @@ export function getAutoUpdateDisabledReason(args: {
   disabledByEnv: boolean;
   hasUpdateFeedConfig: boolean;
 }): string | null {
-  if (!args.hasUpdateFeedConfig) {
-    return "Automatic updates are not available because no update feed is configured.";
-  }
   if (args.isDevelopment || !args.isPackaged) {
     return "Automatic updates are only available in packaged production builds.";
+  }
+  if (!args.hasUpdateFeedConfig) {
+    return "Automatic updates are not available because no update feed is configured.";
   }
   if (args.disabledByEnv) {
     return "Automatic updates are disabled by the T3CODE_DISABLE_AUTO_UPDATE setting.";
