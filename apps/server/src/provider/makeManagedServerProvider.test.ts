@@ -1,6 +1,6 @@
 import { describe, it, assert } from "@effect/vitest";
 import type { ServerProvider } from "@t3tools/contracts";
-import { Effect, Fiber, PubSub, Ref, Stream } from "effect";
+import { Deferred, Effect, Fiber, PubSub, Ref, Stream } from "effect";
 
 import { makeManagedServerProvider } from "./makeManagedServerProvider";
 
@@ -35,6 +35,25 @@ const refreshedSnapshot: ServerProvider = {
   skills: [],
 };
 
+const enrichedSnapshot: ServerProvider = {
+  ...refreshedSnapshot,
+  checkedAt: "2026-04-10T00:00:02.000Z",
+  models: [
+    {
+      slug: "composer-2",
+      name: "Composer 2",
+      isCustom: false,
+      capabilities: {
+        reasoningEffortLevels: [],
+        supportsFastMode: true,
+        supportsThinkingToggle: false,
+        contextWindowOptions: [],
+        promptInjectedEffortLevels: [],
+      },
+    },
+  ],
+};
+
 describe("makeManagedServerProvider", () => {
   it.effect("keeps the initial snapshot until an explicit refresh runs", () =>
     Effect.scoped(
@@ -61,6 +80,7 @@ describe("makeManagedServerProvider", () => {
           Stream.runCollect,
           Effect.forkChild,
         );
+        yield* Effect.yieldNow;
 
         const refreshed = yield* provider.refresh;
         const updates = Array.from(yield* Fiber.join(updatesFiber));
@@ -95,6 +115,7 @@ describe("makeManagedServerProvider", () => {
           Stream.runCollect,
           Effect.forkChild,
         );
+        yield* Effect.yieldNow;
 
         yield* Ref.set(settingsRef, { enabled: false });
         yield* PubSub.publish(settingsChanges, { enabled: false });
@@ -105,6 +126,43 @@ describe("makeManagedServerProvider", () => {
         assert.deepStrictEqual(updates, [refreshedSnapshot]);
         assert.deepStrictEqual(latest, refreshedSnapshot);
         assert.strictEqual(yield* Ref.get(checkCalls), 1);
+      }),
+    ),
+  );
+
+  it.effect("streams supplemental snapshot updates after the base provider check completes", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const releaseEnrichment = yield* Deferred.make<void>();
+        const provider = yield* makeManagedServerProvider<TestSettings>({
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+          initialSnapshot: () => initialSnapshot,
+          checkProvider: Effect.succeed(refreshedSnapshot),
+          enrichSnapshot: ({ publishSnapshot }) =>
+            Deferred.await(releaseEnrichment).pipe(
+              Effect.flatMap(() => publishSnapshot(enrichedSnapshot)),
+            ),
+          refreshInterval: "1 hour",
+        });
+
+        const updatesFiber = yield* Stream.take(provider.streamChanges, 2).pipe(
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+        yield* Effect.yieldNow;
+
+        const refreshed = yield* provider.refresh;
+        assert.deepStrictEqual(refreshed, refreshedSnapshot);
+
+        yield* Deferred.succeed(releaseEnrichment, undefined);
+
+        const updates = Array.from(yield* Fiber.join(updatesFiber));
+        const latest = yield* provider.getSnapshot;
+
+        assert.deepStrictEqual(updates, [refreshedSnapshot, enrichedSnapshot]);
+        assert.deepStrictEqual(latest, enrichedSnapshot);
       }),
     ),
   );

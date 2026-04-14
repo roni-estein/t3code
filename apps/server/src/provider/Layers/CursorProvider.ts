@@ -38,6 +38,8 @@ const EMPTY_CAPABILITIES: ModelCapabilities = {
 };
 
 const CURSOR_ACP_MODEL_DISCOVERY_TIMEOUT_MS = 15_000;
+const CURSOR_ACP_MODEL_CAPABILITY_TIMEOUT = "4 seconds";
+const CURSOR_ACP_MODEL_DISCOVERY_CONCURRENCY = 4;
 const CURSOR_REFRESH_INTERVAL = "1 hour";
 const CURSOR_PARAMETERIZED_MODEL_PICKER_MIN_VERSION_DATE = 2026_04_08;
 export const CURSOR_PARAMETERIZED_MODEL_PICKER_CAPABILITIES = {
@@ -279,6 +281,16 @@ function buildCursorDiscoveredModels(
   });
 }
 
+function hasCursorModelCapabilities(model: Pick<ServerProviderModel, "capabilities">): boolean {
+  return (
+    (model.capabilities?.reasoningEffortLevels.length ?? 0) > 0 ||
+    model.capabilities?.supportsFastMode === true ||
+    model.capabilities?.supportsThinkingToggle === true ||
+    (model.capabilities?.contextWindowOptions.length ?? 0) > 0 ||
+    (model.capabilities?.promptInjectedEffortLevels.length ?? 0) > 0
+  );
+}
+
 export function buildCursorDiscoveredModelsFromConfigOptions(
   configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined,
 ): ReadonlyArray<ServerProviderModel> {
@@ -437,6 +449,93 @@ const discoverCursorModelsViaAcp = (cursorSettings: CursorSettings) =>
     const started = yield* acp.start();
     return buildCursorDiscoveredModelsFromConfigOptions(
       started.sessionSetupResult.configOptions ?? [],
+    );
+  }).pipe(Effect.scoped);
+
+const discoverCursorModelCapabilitiesViaAcp = (
+  cursorSettings: CursorSettings,
+  existingModels: ReadonlyArray<ServerProviderModel>,
+) =>
+  Effect.gen(function* () {
+    const acp = yield* makeCursorAcpProbeRuntime(cursorSettings);
+    const started = yield* acp.start();
+    const initialConfigOptions = started.sessionSetupResult.configOptions ?? [];
+    const modelOption = findCursorModelConfigOption(initialConfigOptions);
+    const modelChoices = flattenSessionConfigSelectOptions(modelOption);
+    if (!modelOption || modelChoices.length === 0) {
+      return [];
+    }
+
+    const currentModelValue =
+      modelOption.type === "select" ? modelOption.currentValue?.trim() || undefined : undefined;
+    const capabilitiesBySlug = new Map<string, ModelCapabilities>();
+    if (currentModelValue) {
+      capabilitiesBySlug.set(
+        currentModelValue,
+        buildCursorCapabilitiesFromConfigOptions(initialConfigOptions),
+      );
+    }
+
+    const targetModelSlugs = new Set(
+      existingModels
+        .filter((model) => !model.isCustom && !hasCursorModelCapabilities(model))
+        .map((model) => model.slug),
+    );
+    if (targetModelSlugs.size === 0) {
+      return buildCursorDiscoveredModels(
+        modelChoices.map((modelChoice) => ({
+          slug: modelChoice.value.trim(),
+          name: modelChoice.name.trim(),
+          capabilities: capabilitiesBySlug.get(modelChoice.value.trim()) ?? EMPTY_CAPABILITIES,
+        })),
+      );
+    }
+
+    const probedCapabilities = yield* Effect.forEach(
+      modelChoices,
+      (modelChoice) => {
+        const modelSlug = modelChoice.value.trim();
+        if (!modelSlug || !targetModelSlugs.has(modelSlug) || capabilitiesBySlug.has(modelSlug)) {
+          return Effect.void;
+        }
+
+        return Effect.gen(function* () {
+          const probeAcp = yield* makeCursorAcpProbeRuntime(cursorSettings);
+          const probeStarted = yield* probeAcp.start();
+          const probeConfigOptions = probeStarted.sessionSetupResult.configOptions ?? [];
+          const probeModelOption = findCursorModelConfigOption(probeConfigOptions);
+          const probeCurrentModelValue =
+            probeModelOption?.type === "select"
+              ? probeModelOption.currentValue?.trim() || undefined
+              : undefined;
+          const nextConfigOptions =
+            probeCurrentModelValue === modelSlug
+              ? probeConfigOptions
+              : yield* probeAcp
+                  .setConfigOption(probeModelOption?.id ?? modelOption.id, modelSlug)
+                  .pipe(Effect.map((response) => response.configOptions ?? probeConfigOptions));
+          return [modelSlug, buildCursorCapabilitiesFromConfigOptions(nextConfigOptions)] as const;
+        }).pipe(
+          Effect.timeout(CURSOR_ACP_MODEL_CAPABILITY_TIMEOUT),
+          Effect.catch(() => Effect.void),
+        );
+      },
+      { concurrency: CURSOR_ACP_MODEL_DISCOVERY_CONCURRENCY },
+    );
+
+    for (const entry of probedCapabilities) {
+      if (!entry) {
+        continue;
+      }
+      capabilitiesBySlug.set(entry[0], entry[1]);
+    }
+
+    return buildCursorDiscoveredModels(
+      modelChoices.map((modelChoice) => ({
+        slug: modelChoice.value.trim(),
+        name: modelChoice.name.trim(),
+        capabilities: capabilitiesBySlug.get(modelChoice.value.trim()) ?? EMPTY_CAPABILITIES,
+      })),
     );
   }).pipe(Effect.scoped);
 
@@ -937,6 +1036,35 @@ export const CursorProviderLive = Layer.effect(
       haveSettingsChanged: (previous, next) => !Equal.equals(previous, next),
       initialSnapshot: buildInitialCursorProviderSnapshot,
       checkProvider,
+      enrichSnapshot: ({ settings, snapshot, publishSnapshot }) => {
+        if (
+          !settings.enabled ||
+          snapshot.auth.status === "unauthenticated" ||
+          !snapshot.models.some((model) => !model.isCustom && !hasCursorModelCapabilities(model))
+        ) {
+          return Effect.void;
+        }
+
+        return discoverCursorModelCapabilitiesViaAcp(settings, snapshot.models).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.flatMap((discoveredModels) => {
+            if (discoveredModels.length === 0) {
+              return Effect.void;
+            }
+
+            return publishSnapshot({
+              ...snapshot,
+              models: providerModelsFromSettings(
+                discoveredModels,
+                PROVIDER,
+                settings.customModels,
+                EMPTY_CAPABILITIES,
+              ),
+            });
+          }),
+          Effect.catch(() => Effect.void),
+        );
+      },
       refreshInterval: CURSOR_REFRESH_INTERVAL,
     });
   }),
