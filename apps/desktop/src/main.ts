@@ -500,12 +500,11 @@ async function fetchLoopbackSshJson<T>(input: {
   }
 
   if (!response.ok) {
-    throw new Error(
-      await readRemoteFetchErrorMessage(
-        response,
-        `SSH forwarded request failed (${response.status}).`,
-      ),
+    const message = await readRemoteFetchErrorMessage(
+      response,
+      `SSH forwarded request failed (${response.status}).`,
     );
+    throw new Error(`[ssh_http:${response.status}] ${message}`);
   }
 
   return (await response.json()) as T;

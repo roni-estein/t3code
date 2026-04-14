@@ -49,6 +49,7 @@ import {
   removeSavedEnvironmentBearerToken,
   type SavedEnvironmentRecord,
   useSavedEnvironmentRegistryStore,
+  toPersistedSavedEnvironmentRecord,
   useSavedEnvironmentRuntimeStore,
   waitForSavedEnvironmentRegistryHydration,
   writeSavedEnvironmentBearerToken,
@@ -392,16 +393,14 @@ function isoNow(): string {
   return new Date().toISOString();
 }
 
-function serializeSavedEnvironmentRecord(record: SavedEnvironmentRecord) {
-  return {
-    environmentId: record.environmentId,
-    label: record.label,
-    httpBaseUrl: record.httpBaseUrl,
-    wsBaseUrl: record.wsBaseUrl,
-    createdAt: record.createdAt,
-    lastConnectedAt: record.lastConnectedAt,
-    ...(record.desktopSsh ? { desktopSsh: record.desktopSsh } : {}),
-  } as const;
+const SSH_HTTP_STATUS_RE = /^\[ssh_http:(\d+)\] /;
+
+function isSshHttpAuthError(error: unknown, status: number): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  const match = SSH_HTTP_STATUS_RE.exec(error.message);
+  return match !== null && Number(match[1]) === status;
 }
 
 function isDesktopSshTargetEqual(
@@ -436,7 +435,7 @@ function findSavedEnvironmentRecordByDesktopSshTarget(
 
 async function persistSavedEnvironmentRegistryRollback(): Promise<void> {
   await ensureLocalApi().persistence.setSavedEnvironmentRegistry(
-    listSavedEnvironmentRecords().map((entry) => serializeSavedEnvironmentRecord(entry)),
+    listSavedEnvironmentRecords().map((entry) => toPersistedSavedEnvironmentRecord(entry)),
   );
 }
 
@@ -1049,11 +1048,10 @@ async function ensureSavedEnvironmentConnection(
           options?.serverConfig ?? null,
         );
       } catch (error) {
-        if (
-          !record.desktopSsh ||
-          !isRemoteEnvironmentAuthHttpError(error) ||
-          error.status !== 401
-        ) {
+        const is401 = record.desktopSsh
+          ? isSshHttpAuthError(error, 401)
+          : isRemoteEnvironmentAuthHttpError(error) && error.status === 401;
+        if (!is401) {
           throw error;
         }
 

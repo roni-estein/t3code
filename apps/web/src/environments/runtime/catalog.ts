@@ -35,7 +35,7 @@ interface SavedEnvironmentRegistryStore extends SavedEnvironmentRegistryState {
 let savedEnvironmentRegistryHydrated = false;
 let savedEnvironmentRegistryHydrationPromise: Promise<void> | null = null;
 
-function toPersistedSavedEnvironmentRecord(
+export function toPersistedSavedEnvironmentRecord(
   record: SavedEnvironmentRecord,
 ): PersistedSavedEnvironmentRecord {
   return {
