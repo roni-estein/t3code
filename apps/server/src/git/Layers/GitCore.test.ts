@@ -1132,6 +1132,88 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
+    it.effect("skips tmp_pack cleanup while a linked worktree fetch lock is active", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        const gitCommonDir = path.join(tmp, ".git");
+        const packDir = path.join(gitCommonDir, "objects", "pack");
+        const linkedWorktreeFetchHeadLock = path.join(
+          gitCommonDir,
+          "worktrees",
+          "feature",
+          "FETCH_HEAD.lock",
+        );
+        yield* makeDirectory(packDir);
+        yield* makeDirectory(path.dirname(linkedWorktreeFetchHeadLock));
+
+        const leakedTmpPack = path.join(packDir, "tmp_pack_new");
+        yield* writeTextFile(linkedWorktreeFetchHeadLock, "locked\n");
+
+        const ok = (stdout = "") =>
+          Effect.succeed({
+            code: 0,
+            stdout,
+            stderr: "",
+            stdoutTruncated: false,
+            stderrTruncated: false,
+          });
+
+        const core = yield* makeIsolatedGitCore((input) => {
+          if (
+            input.args[0] === "rev-parse" &&
+            input.args[1] === "--abbrev-ref" &&
+            input.args[2] === "--symbolic-full-name" &&
+            input.args[3] === "@{upstream}"
+          ) {
+            return ok("origin/main\n");
+          }
+          if (input.args[0] === "remote") {
+            return ok("origin\n");
+          }
+          if (input.args[0] === "rev-parse" && input.args[1] === "--git-common-dir") {
+            return ok(`${gitCommonDir}\n`);
+          }
+          if (input.args[0] === "--git-dir" && input.args[2] === "fetch") {
+            return Effect.gen(function* () {
+              yield* Effect.sync(() => {
+                writeFileSync(leakedTmpPack, "leaked temporary pack\n");
+              });
+              return yield* new GitCommandError({
+                operation: input.operation,
+                command: `git ${input.args.join(" ")}`,
+                cwd: input.cwd,
+                detail: "simulated fetch timeout",
+              });
+            });
+          }
+          if (input.operation === "GitCore.statusDetails.status") {
+            return ok("# branch.head main\n# branch.upstream origin/main\n# branch.ab +0 -0\n");
+          }
+          if (
+            input.operation === "GitCore.statusDetails.unstagedNumstat" ||
+            input.operation === "GitCore.statusDetails.stagedNumstat"
+          ) {
+            return ok();
+          }
+          if (input.operation === "GitCore.statusDetails.defaultRef") {
+            return ok("refs/remotes/origin/main\n");
+          }
+          return Effect.fail(
+            new GitCommandError({
+              operation: input.operation,
+              command: `git ${input.args.join(" ")}`,
+              cwd: input.cwd,
+              detail: "Unexpected git command in linked worktree fetch cleanup test.",
+            }),
+          );
+        });
+
+        const status = yield* core.statusDetails(tmp);
+        expect(status.branch).toBe("main");
+        expect(existsSync(leakedTmpPack)).toBe(true);
+      }),
+    );
+
     it.effect("throws when branch does not exist", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();

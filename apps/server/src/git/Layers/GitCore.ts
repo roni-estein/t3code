@@ -935,10 +935,25 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
       ) as ReadonlySet<string>;
     });
 
+    const listFetchHeadLockPaths = Effect.fn("listFetchHeadLockPaths")(function* () {
+      const worktreesDir = path.join(gitCommonDir, "worktrees");
+      const worktreeEntries = yield* fileSystem
+        .readDirectory(worktreesDir, { recursive: false })
+        .pipe(Effect.orElseSucceed(() => [] as Array<string>));
+      return [
+        path.join(gitCommonDir, "FETCH_HEAD.lock"),
+        ...worktreeEntries.map((entry) => path.join(worktreesDir, entry, "FETCH_HEAD.lock")),
+      ];
+    });
+
     const hasConcurrentFetchLock = Effect.fn("hasConcurrentFetchLock")(function* () {
-      return yield* fileSystem
-        .exists(path.join(gitCommonDir, "FETCH_HEAD.lock"))
-        .pipe(Effect.orElseSucceed(() => false));
+      const fetchHeadLockPaths = yield* listFetchHeadLockPaths();
+      for (const fetchHeadLockPath of fetchHeadLockPaths) {
+        if (yield* fileSystem.exists(fetchHeadLockPath).pipe(Effect.orElseSucceed(() => false))) {
+          return true;
+        }
+      }
+      return false;
     });
 
     const removeLeakedTemporaryPackFiles = Effect.fn("removeLeakedTemporaryPackFiles")(function* (
