@@ -54,6 +54,11 @@ import { isBackendReadinessAborted, waitForHttpReady } from "./backendReadiness"
 import { showDesktopConfirmDialog } from "./confirmDialog";
 import { resolveDesktopServerExposure } from "./serverExposure";
 import { syncShellEnvironment } from "./syncShellEnvironment";
+import {
+  resolveDesktopUpdateChannel,
+  shouldAcceptDesktopUpdateForCurrentVersion,
+  shouldAllowDesktopPrereleaseUpdates,
+} from "./updateChannel";
 import { getAutoUpdateDisabledReason, shouldBroadcastDownloadProgress } from "./updateState";
 import { ServerListeningDetector } from "./serverListeningDetector";
 import {
@@ -116,8 +121,6 @@ const APP_RUN_ID = Crypto.randomBytes(6).toString("hex");
 const SERVER_SETTINGS_PATH = Path.join(STATE_DIR, "settings.json");
 const AUTO_UPDATE_STARTUP_DELAY_MS = 15_000;
 const AUTO_UPDATE_POLL_INTERVAL_MS = 4 * 60 * 60 * 1000;
-const DESKTOP_UPDATE_CHANNEL = "latest";
-const DESKTOP_UPDATE_ALLOW_PRERELEASE = false;
 const DESKTOP_LOOPBACK_HOST = "127.0.0.1";
 const DESKTOP_REQUIRED_PORT_PROBE_HOSTS = ["0.0.0.0", "::"] as const;
 const TITLEBAR_HEIGHT = 40;
@@ -1168,6 +1171,9 @@ async function installDownloadedUpdate(): Promise<{ accepted: boolean; completed
 }
 
 function configureAutoUpdater(): void {
+  const currentVersion = app.getVersion();
+  const updateChannel = resolveDesktopUpdateChannel(currentVersion);
+  const allowPrerelease = shouldAllowDesktopPrereleaseUpdates(currentVersion);
   const githubToken =
     process.env.T3CODE_DESKTOP_UPDATE_GITHUB_TOKEN?.trim() || process.env.GH_TOKEN?.trim() || "";
   if (githubToken) {
@@ -1205,12 +1211,14 @@ function configureAutoUpdater(): void {
 
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = false;
-  // Keep alpha branding, but force all installs onto the stable update track.
-  autoUpdater.channel = DESKTOP_UPDATE_CHANNEL;
-  autoUpdater.allowPrerelease = DESKTOP_UPDATE_ALLOW_PRERELEASE;
+  autoUpdater.channel = updateChannel;
+  autoUpdater.allowPrerelease = allowPrerelease;
   autoUpdater.allowDowngrade = false;
   autoUpdater.disableDifferentialDownload = isArm64HostRunningIntelBuild(desktopRuntimeInfo);
   let lastLoggedDownloadMilestone = -1;
+  console.info(
+    `[desktop-updater] Configured update channel=${updateChannel} currentVersion=${currentVersion} allowPrerelease=${allowPrerelease}.`,
+  );
 
   if (isArm64HostRunningIntelBuild(desktopRuntimeInfo)) {
     console.info(
@@ -1222,6 +1230,15 @@ function configureAutoUpdater(): void {
     console.info("[desktop-updater] Looking for updates...");
   });
   autoUpdater.on("update-available", (info) => {
+    if (!shouldAcceptDesktopUpdateForCurrentVersion(currentVersion, info.version)) {
+      setUpdateState(reduceDesktopUpdateStateOnNoUpdate(updateState, new Date().toISOString()));
+      lastLoggedDownloadMilestone = -1;
+      console.info(
+        `[desktop-updater] Ignoring update ${info.version} on channel=${resolveDesktopUpdateChannel(info.version)} while currentVersion=${currentVersion} is on channel=${updateChannel}.`,
+      );
+      return;
+    }
+
     setUpdateState(
       reduceDesktopUpdateStateOnUpdateAvailable(
         updateState,

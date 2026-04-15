@@ -25,6 +25,9 @@ This document covers how to run desktop releases from one tag, first without sig
   - Background checks run on startup delay + interval.
   - No automatic download or install.
   - The desktop UI shows a rocket update button when an update is available; click once to download, click again after download to restart/install.
+- Update channel selection:
+  - Stable builds (`X.Y.Z`) only accept stable updates.
+  - Prerelease builds (for example `X.Y.Z-nightly.N`) stay on that prerelease track and ignore stable or differently-tagged prerelease releases.
 - Provider: GitHub Releases (`provider: github`) configured at build time.
 - Repository slug source:
   - `T3CODE_DESKTOP_UPDATE_REPOSITORY` (format `owner/repo`), if set.
