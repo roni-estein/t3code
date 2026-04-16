@@ -658,6 +658,13 @@ const buildUserMessageEffect = Effect.fn("buildUserMessageEffect")(function* (
         bytes,
       }),
     );
+
+    // Include the on-disk path so the model can access the persisted file
+    // (e.g. to copy it into the project workspace).
+    sdkContent.push({
+      type: "text",
+      text: `[Attached image "${attachment.name}" is saved at: ${attachmentPath}]`,
+    });
   }
 
   return buildUserMessage({ sdkContent });

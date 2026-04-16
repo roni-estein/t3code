@@ -1459,6 +1459,19 @@ const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     };
   });
 
+  const resolveAttachmentPaths = (
+    attachments: NonNullable<ProviderSendTurnInput["attachments"]>,
+  ): string[] =>
+    attachments
+      .map((attachment) => {
+        const p = resolveAttachmentPath({
+          attachmentsDir: serverConfig.attachmentsDir,
+          attachment,
+        });
+        return p ? `[Attached image "${attachment.name}" is saved at: ${p}]` : null;
+      })
+      .filter((s): s is string => s !== null);
+
   const sendTurn: CodexAdapterShape["sendTurn"] = Effect.fn("sendTurn")(function* (input) {
     const codexAttachments = yield* Effect.forEach(
       input.attachments ?? [],
@@ -1466,11 +1479,16 @@ const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       { concurrency: 1 },
     );
 
+    // Build path annotations so the model can access persisted image files on disk.
+    const pathAnnotations = resolveAttachmentPaths(input.attachments ?? []).join("\n");
+    const augmentedInput =
+      pathAnnotations && input.input ? `${input.input}\n\n${pathAnnotations}` : input.input;
+
     return yield* Effect.tryPromise({
       try: () => {
         const managerInput = {
           threadId: input.threadId,
-          ...(input.input !== undefined ? { input: input.input } : {}),
+          ...(augmentedInput !== undefined ? { input: augmentedInput } : {}),
           ...(input.modelSelection?.provider === "codex"
             ? { model: input.modelSelection.model }
             : {}),
