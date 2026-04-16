@@ -168,9 +168,9 @@ function MarkdownCodeBlock({ code, children }: { code: string; children: ReactNo
       textarea.style.opacity = "0";
       document.body.appendChild(textarea);
       textarea.select();
-      document.execCommand("copy");
+      const ok = document.execCommand("copy");
       document.body.removeChild(textarea);
-      onSuccess();
+      if (ok) onSuccess();
     } catch {
       // silently fail
     }
