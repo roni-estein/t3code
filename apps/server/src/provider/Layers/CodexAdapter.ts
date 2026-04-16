@@ -1481,8 +1481,11 @@ const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
 
     // Build path annotations so the model can access persisted image files on disk.
     const pathAnnotations = resolveAttachmentPaths(input.attachments ?? []).join("\n");
-    const augmentedInput =
-      pathAnnotations && input.input ? `${input.input}\n\n${pathAnnotations}` : input.input;
+    const augmentedInput = pathAnnotations
+      ? input.input
+        ? `${input.input}\n\n${pathAnnotations}`
+        : pathAnnotations
+      : input.input;
 
     return yield* Effect.tryPromise({
       try: () => {
