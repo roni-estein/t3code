@@ -535,6 +535,7 @@ describe("wsApi", () => {
       sidebarProjectSortOrder: "manual",
       sidebarThreadSortOrder: "created_at",
       timestampFormat: "24-hour",
+      copyButtonPosition: "top",
     });
     const setClientSettings = vi.fn().mockResolvedValue(undefined);
     const getSavedEnvironmentRegistry = vi.fn().mockResolvedValue([]);
@@ -563,6 +564,7 @@ describe("wsApi", () => {
       sidebarProjectSortOrder: "manual",
       sidebarThreadSortOrder: "created_at",
       timestampFormat: "24-hour",
+      copyButtonPosition: "top",
     });
     await api.persistence.getSavedEnvironmentRegistry();
     await api.persistence.setSavedEnvironmentRegistry([]);
@@ -581,6 +583,7 @@ describe("wsApi", () => {
       sidebarProjectSortOrder: "manual",
       sidebarThreadSortOrder: "created_at",
       timestampFormat: "24-hour",
+      copyButtonPosition: "top",
     });
     expect(getSavedEnvironmentRegistry).toHaveBeenCalledWith();
     expect(setSavedEnvironmentRegistry).toHaveBeenCalledWith([]);
@@ -600,6 +603,7 @@ describe("wsApi", () => {
       sidebarProjectSortOrder: "manual",
       sidebarThreadSortOrder: "created_at",
       timestampFormat: "24-hour",
+      copyButtonPosition: "top",
     });
     await api.persistence.setSavedEnvironmentRegistry([
       {
@@ -623,6 +627,7 @@ describe("wsApi", () => {
       sidebarProjectSortOrder: "manual",
       sidebarThreadSortOrder: "created_at",
       timestampFormat: "24-hour",
+      copyButtonPosition: "top",
     });
     await expect(api.persistence.getSavedEnvironmentRegistry()).resolves.toEqual([
       {
