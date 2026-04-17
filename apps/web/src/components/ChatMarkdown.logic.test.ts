@@ -17,9 +17,7 @@ import { describe, expect, it } from "vitest";
 
 describe("copy button position style", () => {
   const resolvePositionStyle = (position: "top" | "bottom") =>
-    position === "bottom"
-      ? { top: "auto", bottom: "0.5rem" }
-      : { top: "0.5rem" };
+    position === "bottom" ? { top: "auto", bottom: "0.5rem" } : { top: "0.5rem" };
 
   it("returns top positioning by default", () => {
     expect(resolvePositionStyle("top")).toEqual({ top: "0.5rem" });

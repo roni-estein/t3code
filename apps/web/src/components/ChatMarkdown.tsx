@@ -156,7 +156,10 @@ function MarkdownCodeBlock({ code, children }: { code: string; children: ReactNo
 
     // Prefer the async Clipboard API (requires secure context)
     if (typeof navigator !== "undefined" && navigator.clipboard != null) {
-      void navigator.clipboard.writeText(code).then(onSuccess).catch(() => undefined);
+      void navigator.clipboard
+        .writeText(code)
+        .then(onSuccess)
+        .catch(() => undefined);
       return;
     }
 
@@ -188,9 +191,7 @@ function MarkdownCodeBlock({ code, children }: { code: string; children: ReactNo
   );
 
   const positionStyle =
-    copyButtonPosition === "bottom"
-      ? { top: "auto", bottom: "0.5rem" }
-      : { top: "0.5rem" };
+    copyButtonPosition === "bottom" ? { top: "auto", bottom: "0.5rem" } : { top: "0.5rem" };
 
   return (
     <div className="chat-markdown-codeblock leading-snug">
