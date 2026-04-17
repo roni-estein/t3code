@@ -1713,6 +1713,45 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
+    it.effect("backs off upstream auto-refresh after a failed status fetch", () =>
+      Effect.gen(function* () {
+        const remote = yield* makeTmpDir();
+        const source = yield* makeTmpDir();
+        yield* git(remote, ["init", "--bare"]);
+
+        yield* initRepoWithCommit(source);
+        const initialBranch = (yield* (yield* GitCore).listBranches({
+          cwd: source,
+        })).branches.find((branch) => branch.current)!.name;
+        yield* git(source, ["remote", "add", "origin", remote]);
+        yield* git(source, ["push", "-u", "origin", initialBranch]);
+
+        const realGitCore = yield* GitCore;
+        let refreshFetchAttempts = 0;
+        const core = yield* makeIsolatedGitCore((input) => {
+          if (input.args[0] === "--git-dir" && input.args[2] === "fetch") {
+            refreshFetchAttempts += 1;
+            return Effect.fail(
+              new GitCommandError({
+                operation: "git.test.statusRefreshFailure",
+                command: `git ${input.args.join(" ")}`,
+                cwd: input.cwd,
+                detail: "simulated fetch timeout",
+              }),
+            );
+          }
+          return realGitCore.execute(input);
+        });
+
+        const firstStatus = yield* core.statusDetails(source);
+        const secondStatus = yield* core.statusDetails(source);
+
+        expect(firstStatus.branch).toBe(initialBranch);
+        expect(secondStatus.branch).toBe(initialBranch);
+        expect(refreshFetchAttempts).toBe(1);
+      }),
+    );
+
     it.effect("computes ahead count against base branch when no upstream is configured", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
