@@ -161,18 +161,19 @@ function MarkdownCodeBlock({ code, children }: { code: string; children: ReactNo
     }
 
     // Fallback for non-secure contexts (e.g. HTTP over Tailscale)
+    const textarea = document.createElement("textarea");
+    textarea.value = code;
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
     try {
-      const textarea = document.createElement("textarea");
-      textarea.value = code;
-      textarea.style.position = "fixed";
-      textarea.style.opacity = "0";
-      document.body.appendChild(textarea);
       textarea.select();
       const ok = document.execCommand("copy");
-      document.body.removeChild(textarea);
       if (ok) onSuccess();
     } catch {
       // silently fail
+    } finally {
+      document.body.removeChild(textarea);
     }
   }, [code]);
 
