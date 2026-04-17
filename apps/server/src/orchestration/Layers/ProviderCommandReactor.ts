@@ -236,18 +236,7 @@ const make = Effect.gen(function* () {
       ? thread.session.providerName
       : undefined;
     const requestedModelSelection = options?.modelSelection;
-    const threadProvider: ProviderKind = currentProvider ?? thread.modelSelection.provider;
-    if (
-      requestedModelSelection !== undefined &&
-      requestedModelSelection.provider !== threadProvider
-    ) {
-      return yield* new ProviderAdapterRequestError({
-        provider: threadProvider,
-        method: "thread.turn.start",
-        detail: `Thread '${threadId}' is bound to provider '${threadProvider}' and cannot switch to '${requestedModelSelection.provider}'.`,
-      });
-    }
-    const preferredProvider: ProviderKind = currentProvider ?? threadProvider;
+    const preferredProvider: ProviderKind = currentProvider ?? thread.modelSelection.provider;
     const desiredModelSelection = requestedModelSelection ?? thread.modelSelection;
     const effectiveCwd = resolveThreadWorkspaceCwd({
       thread,
@@ -293,9 +282,6 @@ const make = Effect.gen(function* () {
       thread.session && thread.session.status !== "stopped" && activeSession ? thread.id : null;
     if (existingSessionThreadId) {
       const runtimeModeChanged = thread.runtimeMode !== thread.session?.runtimeMode;
-      const providerChanged =
-        requestedModelSelection !== undefined &&
-        requestedModelSelection.provider !== currentProvider;
       const sessionModelSwitch =
         currentProvider === undefined
           ? "in-session"
@@ -312,17 +298,15 @@ const make = Effect.gen(function* () {
 
       if (
         !runtimeModeChanged &&
-        !providerChanged &&
         !shouldRestartForModelChange &&
         !shouldRestartForModelSelectionChange
       ) {
         return existingSessionThreadId;
       }
 
-      const resumeCursor =
-        providerChanged || shouldRestartForModelChange
-          ? undefined
-          : (activeSession?.resumeCursor ?? undefined);
+      const resumeCursor = shouldRestartForModelChange
+        ? undefined
+        : (activeSession?.resumeCursor ?? undefined);
       yield* Effect.logInfo("provider command reactor restarting provider session", {
         threadId,
         existingSessionThreadId,
@@ -331,7 +315,6 @@ const make = Effect.gen(function* () {
         currentRuntimeMode: thread.session?.runtimeMode,
         desiredRuntimeMode: thread.runtimeMode,
         runtimeModeChanged,
-        providerChanged,
         modelChanged,
         shouldRestartForModelChange,
         shouldRestartForModelSelectionChange,
