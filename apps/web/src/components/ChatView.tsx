@@ -3034,39 +3034,36 @@ export default function ChatView(props: ChatViewProps) {
 
     await api.orchestration
       .dispatchCommand({
-        type: "thread.create",
+        type: "thread.turn.start",
         commandId: newCommandId(),
         threadId: nextThreadId,
-        projectId: activeProject.id,
-        title: nextThreadTitle,
-        modelSelection: nextThreadModelSelection,
+        message: {
+          messageId: newMessageId(),
+          role: "user",
+          text: outgoingImplementationPrompt,
+          attachments: [],
+        },
+        modelSelection: ctxSelectedModelSelection,
+        titleSeed: nextThreadTitle,
         runtimeMode,
         interactionMode: "default",
-        branch: activeThreadBranch,
-        worktreePath: activeThread.worktreePath,
+        bootstrap: {
+          createThread: {
+            projectId: activeProject.id,
+            title: nextThreadTitle,
+            modelSelection: nextThreadModelSelection,
+            runtimeMode,
+            interactionMode: "default",
+            branch: activeThreadBranch,
+            worktreePath: activeThread.worktreePath,
+            createdAt,
+          },
+        },
+        sourceProposedPlan: {
+          threadId: activeThread.id,
+          planId: activeProposedPlan.id,
+        },
         createdAt,
-      })
-      .then(() => {
-        return api.orchestration.dispatchCommand({
-          type: "thread.turn.start",
-          commandId: newCommandId(),
-          threadId: nextThreadId,
-          message: {
-            messageId: newMessageId(),
-            role: "user",
-            text: outgoingImplementationPrompt,
-            attachments: [],
-          },
-          modelSelection: ctxSelectedModelSelection,
-          titleSeed: nextThreadTitle,
-          runtimeMode,
-          interactionMode: "default",
-          sourceProposedPlan: {
-            threadId: activeThread.id,
-            planId: activeProposedPlan.id,
-          },
-          createdAt,
-        });
       })
       .then(() => {
         return waitForStartedServerThread(scopeThreadRef(activeThread.environmentId, nextThreadId));
@@ -3082,14 +3079,7 @@ export default function ChatView(props: ChatViewProps) {
           },
         });
       })
-      .catch(async (err: unknown) => {
-        await api.orchestration
-          .dispatchCommand({
-            type: "thread.delete",
-            commandId: newCommandId(),
-            threadId: nextThreadId,
-          })
-          .catch(() => undefined);
+      .catch((err: unknown) => {
         toastManager.add({
           type: "error",
           title: "Could not start implementation thread",
