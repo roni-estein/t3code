@@ -3,9 +3,12 @@ import { describe, expect, it } from "vitest";
 import {
   clampCollapsedComposerCursor,
   collapseExpandedComposerCursor,
+  deriveImageFilenameFromUrl,
   detectComposerTrigger,
   expandCollapsedComposerCursor,
+  extractDraggedImageUrls,
   isCollapsedCursorAdjacentToInlineToken,
+  isComposerAttachmentDrag,
   parseStandaloneComposerSlashCommand,
   replaceTextRange,
 } from "./composer-logic";
@@ -285,6 +288,151 @@ describe("isCollapsedCursorAdjacentToInlineToken", () => {
 
     expect(isCollapsedCursorAdjacentToInlineToken(text, tokenEnd, "left")).toBe(true);
     expect(isCollapsedCursorAdjacentToInlineToken(text, tokenStart, "right")).toBe(true);
+  });
+});
+
+describe("isComposerAttachmentDrag", () => {
+  it("accepts real File drags (Finder, other apps)", () => {
+    expect(isComposerAttachmentDrag(["Files"])).toBe(true);
+  });
+
+  it("accepts browser image/link drags that carry text/uri-list", () => {
+    expect(isComposerAttachmentDrag(["text/uri-list", "text/html", "text/plain"])).toBe(true);
+  });
+
+  it("ignores plain-text drags so Lexical keeps handling them", () => {
+    expect(isComposerAttachmentDrag(["text/plain"])).toBe(false);
+    expect(isComposerAttachmentDrag(["text/plain", "text/html"])).toBe(false);
+  });
+
+  it("ignores an empty type list", () => {
+    expect(isComposerAttachmentDrag([])).toBe(false);
+  });
+});
+
+const makeDraggedData = (entries: Record<string, string>) => ({
+  types: Object.keys(entries),
+  getData: (type: string) => entries[type] ?? "",
+});
+
+describe("extractDraggedImageUrls", () => {
+  it("parses a single URL from text/uri-list", () => {
+    const data = makeDraggedData({
+      "text/uri-list": "https://files.oaiusercontent.com/example.png",
+    });
+    expect(extractDraggedImageUrls(data)).toEqual(["https://files.oaiusercontent.com/example.png"]);
+  });
+
+  it("ignores comment lines in text/uri-list per RFC 2483", () => {
+    const data = makeDraggedData({
+      "text/uri-list": "# dragged from ChatGPT\nhttps://cdn.example.com/a.png",
+    });
+    expect(extractDraggedImageUrls(data)).toEqual(["https://cdn.example.com/a.png"]);
+  });
+
+  it("falls back to <img src> in text/html when uri-list is missing", () => {
+    const data = makeDraggedData({
+      "text/html": '<meta charset="utf-8"><img src="https://cdn.example.com/b.webp" alt="dragged">',
+    });
+    expect(extractDraggedImageUrls(data)).toEqual(["https://cdn.example.com/b.webp"]);
+  });
+
+  it("accepts single-quoted src attributes", () => {
+    const data = makeDraggedData({
+      "text/html": "<img src='https://cdn.example.com/c.gif'>",
+    });
+    expect(extractDraggedImageUrls(data)).toEqual(["https://cdn.example.com/c.gif"]);
+  });
+
+  it("deduplicates the same URL appearing in both uri-list and html", () => {
+    const data = makeDraggedData({
+      "text/uri-list": "https://cdn.example.com/d.png",
+      "text/html": '<img src="https://cdn.example.com/d.png">',
+    });
+    expect(extractDraggedImageUrls(data)).toEqual(["https://cdn.example.com/d.png"]);
+  });
+
+  it("accepts data:image/ and blob: URLs", () => {
+    const data = makeDraggedData({
+      "text/uri-list": "data:image/png;base64,AAAA",
+      "text/html": '<img src="blob:https://example.com/abc-123">',
+    });
+    expect(extractDraggedImageUrls(data)).toEqual([
+      "data:image/png;base64,AAAA",
+      "blob:https://example.com/abc-123",
+    ]);
+  });
+
+  it("rejects non-http schemes and non-image data URLs", () => {
+    const data = makeDraggedData({
+      "text/uri-list": "file:///Users/alice/secret.txt\nabout:blank\ndata:text/plain,hello",
+    });
+    expect(extractDraggedImageUrls(data)).toEqual([]);
+  });
+
+  it("uses text/plain as a last-resort fallback", () => {
+    const data = makeDraggedData({ "text/plain": "https://cdn.example.com/e.png" });
+    expect(extractDraggedImageUrls(data)).toEqual(["https://cdn.example.com/e.png"]);
+  });
+
+  it("does not fall back to text/plain when uri-list/html already yielded URLs", () => {
+    // Guards against an optional-fallthrough bug: the fallback branch must
+    // only fire when uri-list AND html produced nothing.
+    const data = makeDraggedData({
+      "text/uri-list": "https://cdn.example.com/f.png",
+      "text/plain": "totally unrelated text that happens to mention https://example.com",
+    });
+    expect(extractDraggedImageUrls(data)).toEqual(["https://cdn.example.com/f.png"]);
+  });
+
+  it("returns an empty array when nothing is extractable", () => {
+    expect(extractDraggedImageUrls(makeDraggedData({ "text/plain": "just some text" }))).toEqual(
+      [],
+    );
+    expect(extractDraggedImageUrls(makeDraggedData({}))).toEqual([]);
+  });
+});
+
+describe("deriveImageFilenameFromUrl", () => {
+  it("preserves the original filename when the URL has one", () => {
+    expect(deriveImageFilenameFromUrl("https://cdn.example.com/path/photo.png", "image/png")).toBe(
+      "photo.png",
+    );
+  });
+
+  it("strips the query string before extracting the filename", () => {
+    expect(
+      deriveImageFilenameFromUrl(
+        "https://cdn.example.com/path/photo.jpg?token=abc&v=2",
+        "image/jpeg",
+      ),
+    ).toBe("photo.jpg");
+  });
+
+  it("adds an extension when the URL path has none", () => {
+    expect(deriveImageFilenameFromUrl("https://cdn.example.com/resource/12345", "image/webp")).toBe(
+      "12345.webp",
+    );
+  });
+
+  it("falls back to a generic name when the URL has no usable path", () => {
+    expect(deriveImageFilenameFromUrl("https://cdn.example.com/", "image/png")).toBe(
+      "dropped-image.png",
+    );
+  });
+
+  it("falls back to png when the MIME subtype is missing", () => {
+    expect(deriveImageFilenameFromUrl("https://cdn.example.com/", "")).toBe("dropped-image.png");
+  });
+
+  it("decodes percent-encoded names", () => {
+    expect(
+      deriveImageFilenameFromUrl("https://cdn.example.com/path/my%20photo.png", "image/png"),
+    ).toBe("my photo.png");
+  });
+
+  it("handles invalid URLs without throwing", () => {
+    expect(deriveImageFilenameFromUrl("not a url", "image/png")).toBe("dropped-image.png");
   });
 });
 

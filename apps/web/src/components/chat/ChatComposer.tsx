@@ -37,8 +37,11 @@ import {
   collapseExpandedComposerCursor,
   detectComposerTrigger,
   expandCollapsedComposerCursor,
+  extractDraggedImageUrls,
+  isComposerAttachmentDrag,
   replaceTextRange,
 } from "../../composer-logic";
+import { fetchDroppedImageAsFile } from "../../lib/fetchDroppedImage";
 import { deriveComposerSendState, readFileAsDataUrl } from "../ChatView.logic";
 import {
   type ComposerImageAttachment,
@@ -1572,21 +1575,21 @@ export const ChatComposer = memo(
     };
 
     const onComposerDragEnter = (event: React.DragEvent<HTMLDivElement>) => {
-      if (!event.dataTransfer.types.includes("Files")) return;
+      if (!isComposerAttachmentDrag(event.dataTransfer.types)) return;
       event.preventDefault();
       dragDepthRef.current += 1;
       setIsDragOverComposer(true);
     };
 
     const onComposerDragOver = (event: React.DragEvent<HTMLDivElement>) => {
-      if (!event.dataTransfer.types.includes("Files")) return;
+      if (!isComposerAttachmentDrag(event.dataTransfer.types)) return;
       event.preventDefault();
       event.dataTransfer.dropEffect = "copy";
       setIsDragOverComposer(true);
     };
 
     const onComposerDragLeave = (event: React.DragEvent<HTMLDivElement>) => {
-      if (!event.dataTransfer.types.includes("Files")) return;
+      if (!isComposerAttachmentDrag(event.dataTransfer.types)) return;
       event.preventDefault();
       const nextTarget = event.relatedTarget;
       if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) return;
@@ -1597,13 +1600,43 @@ export const ChatComposer = memo(
     };
 
     const onComposerDrop = (event: React.DragEvent<HTMLDivElement>) => {
-      if (!event.dataTransfer.types.includes("Files")) return;
+      if (!isComposerAttachmentDrag(event.dataTransfer.types)) return;
       event.preventDefault();
       dragDepthRef.current = 0;
       setIsDragOverComposer(false);
+
       const files = Array.from(event.dataTransfer.files);
-      addComposerImages(files);
-      focusComposer();
+      if (files.length > 0) {
+        addComposerImages(files);
+        focusComposer();
+        return;
+      }
+
+      // No real files — likely an image dragged from another browser tab
+      // (e.g. the ChatGPT web UI). Snapshot the URLs synchronously because
+      // `event.dataTransfer` is inert outside this handler, then fetch the
+      // bytes asynchronously.
+      const urls = extractDraggedImageUrls(event.dataTransfer);
+      if (urls.length === 0) return;
+
+      void (async () => {
+        const results = await Promise.all(urls.map((url) => fetchDroppedImageAsFile(url)));
+        const fetched = results.filter((file): file is File => file !== null);
+        if (fetched.length > 0) {
+          addComposerImages(fetched);
+          focusComposer();
+          return;
+        }
+        // We saw image-shaped URLs but couldn't turn any into a file — usually
+        // a CORS block on the source host. Let the user know so they know to
+        // fall back to the Finder round-trip that already works.
+        toastManager.add({
+          type: "error",
+          title: "Couldn't attach dragged image.",
+          description:
+            "The source blocked a direct download. Save the image to your computer first, then drop the file.",
+        });
+      })();
     };
     const handleInterruptPrimaryAction = useCallback(() => {
       void onInterrupt();
