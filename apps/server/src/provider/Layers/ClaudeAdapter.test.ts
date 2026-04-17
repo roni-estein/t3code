@@ -650,6 +650,10 @@ describe("ClaudeAdapterLive", () => {
             data: "AQIDBA==",
           },
         },
+        {
+          type: "text",
+          text: `[Attached image "diagram.png" is saved at: ${attachmentPath}]`,
+        },
       ]);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
