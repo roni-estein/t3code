@@ -417,6 +417,39 @@ describe("startSession", () => {
     }
   });
 
+  it("reports a missing workspace root instead of blaming the codex binary", async () => {
+    const manager = new CodexAppServerManager();
+    const events: Array<{ method: string; kind: string; message?: string }> = [];
+    manager.on("event", (event) => {
+      events.push({
+        method: event.method,
+        kind: event.kind,
+        ...(event.message ? { message: event.message } : {}),
+      });
+    });
+
+    const missingWorkspaceRoot = path.join(os.tmpdir(), `codex-missing-workspace-${randomUUID()}`);
+
+    await expect(
+      manager.startSession({
+        threadId: asThreadId("thread-1"),
+        provider: "codex",
+        binaryPath: process.execPath,
+        cwd: missingWorkspaceRoot,
+        runtimeMode: "full-access",
+      }),
+    ).rejects.toThrow(`Workspace root does not exist: ${missingWorkspaceRoot}`);
+    expect(events).toEqual([
+      {
+        method: "session/startFailed",
+        kind: "error",
+        message: `Workspace root does not exist: ${missingWorkspaceRoot}`,
+      },
+    ]);
+
+    manager.stopAll();
+  });
+
   it("fails fast with an upgrade message when codex is below the minimum supported version", async () => {
     const manager = new CodexAppServerManager();
     const events: Array<{ method: string; kind: string; message?: string }> = [];

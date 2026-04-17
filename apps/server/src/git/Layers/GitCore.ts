@@ -55,8 +55,8 @@ const WORKSPACE_GIT_HARDENED_CONFIG_ARGS = [
   "core.untrackedCache=false",
 ] as const;
 const STATUS_UPSTREAM_REFRESH_INTERVAL = Duration.seconds(15);
+const STATUS_UPSTREAM_REFRESH_FAILURE_RETRY_INTERVAL = Duration.minutes(10);
 const STATUS_UPSTREAM_REFRESH_TIMEOUT = Duration.seconds(5);
-const STATUS_UPSTREAM_REFRESH_FAILURE_COOLDOWN = Duration.seconds(5);
 const STATUS_UPSTREAM_REFRESH_CACHE_CAPACITY = 2_048;
 const TEMPORARY_PACK_FILE_PREFIX = "tmp_pack_";
 const DEFAULT_BASE_BRANCH_CANDIDATES = ["main", "master"] as const;
@@ -1033,11 +1033,11 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
 
   const statusRemoteRefreshCache = yield* Cache.makeWith(refreshStatusRemoteCacheEntry, {
     capacity: STATUS_UPSTREAM_REFRESH_CACHE_CAPACITY,
-    // Keep successful refreshes warm and briefly back off failed refreshes to avoid retry storms.
+    // Keep successful refreshes warm and back off failed auto-refreshes to avoid retry storms.
     timeToLive: (exit) =>
       Exit.isSuccess(exit)
         ? STATUS_UPSTREAM_REFRESH_INTERVAL
-        : STATUS_UPSTREAM_REFRESH_FAILURE_COOLDOWN,
+        : STATUS_UPSTREAM_REFRESH_FAILURE_RETRY_INTERVAL,
   });
 
   const refreshStatusUpstreamIfStale = Effect.fn("refreshStatusUpstreamIfStale")(function* (

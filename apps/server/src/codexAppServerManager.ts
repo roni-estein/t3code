@@ -1,6 +1,7 @@
 import { type ChildProcessWithoutNullStreams, spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
+import { statSync } from "node:fs";
 import readline from "node:readline";
 
 import {
@@ -470,6 +471,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       }
 
       const resolvedCwd = input.cwd ?? process.cwd();
+      assertWorkspaceRootExists(resolvedCwd);
 
       const session: ProviderSession = {
         provider: "codex",
@@ -1556,6 +1558,20 @@ function brandIfNonEmpty<T extends string>(
 ): T | undefined {
   const normalized = value?.trim();
   return normalized?.length ? maker(normalized) : undefined;
+}
+
+function assertWorkspaceRootExists(workspaceRoot: string): void {
+  try {
+    const stat = statSync(workspaceRoot);
+    if (!stat.isDirectory()) {
+      throw new Error(`Workspace root is not a directory: ${workspaceRoot}`);
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") {
+      throw new Error(`Workspace root does not exist: ${workspaceRoot}`, { cause: error });
+    }
+    throw error;
+  }
 }
 
 function normalizeProviderThreadId(value: string | undefined): string | undefined {
