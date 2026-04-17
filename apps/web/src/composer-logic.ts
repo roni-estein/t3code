@@ -389,9 +389,8 @@ export function deriveImageFilenameFromUrl(url: string, mimeType: string): strin
   const cleaned = decodeURIComponent(last)
     .replace(/[\r\n\t]/g, "")
     .trim();
-  const subtype = mimeType.split("/")[1]?.split(";")[0]?.trim() || "png";
-  const ext = subtype || "png";
   if (cleaned && /\.[a-z0-9]{1,6}$/i.test(cleaned)) return cleaned;
+  const ext = mimeType.split("/")[1]?.split(";")[0]?.trim() || "png";
   if (cleaned) return `${cleaned}.${ext}`;
   return `dropped-image.${ext}`;
 }
