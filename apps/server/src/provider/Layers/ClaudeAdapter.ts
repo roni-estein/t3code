@@ -66,6 +66,7 @@ import {
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { claudeSessionFileExists } from "../sessionHealth.ts";
 import { getClaudeModelCapabilities } from "./ClaudeProvider.ts";
 import {
   ProviderAdapterProcessError,
@@ -2855,6 +2856,39 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(fastMode ? { fastMode: true } : {}),
       };
 
+      // Pre-spawn session-file health check (plan #508 phase 1).
+      //
+      // Claude Code reads its prior conversation from ~/.claude/projects/
+      // <cwd-encoded>/<sessionId>.jsonl. If the file has disappeared —
+      // GC, crash, mid-write truncation on a t3-serve restart, cwd
+      // change — passing `--resume` surfaces as:
+      //   "No conversation found with session ID: <id>"
+      // and breaks the user's thread. Detect that up front and start a
+      // fresh Claude session instead. The user's thread history in t3's
+      // sqlite is untouched; only the in-CLI conversational context is
+      // lost (which is already unreachable at this point).
+      const resumeCheckCwd = input.cwd;
+      const safeResumeSessionId =
+        existingResumeSessionId && resumeCheckCwd
+          ? (yield* Effect.promise(() =>
+              claudeSessionFileExists({
+                cwd: resumeCheckCwd,
+                sessionId: existingResumeSessionId,
+              }),
+            ))
+            ? existingResumeSessionId
+            : undefined
+          : existingResumeSessionId;
+      if (existingResumeSessionId && safeResumeSessionId !== existingResumeSessionId) {
+        yield* Effect.logWarning("claude.session-file-missing").pipe(
+          Effect.annotateLogs({
+            threadId: input.threadId,
+            requestedSessionId: existingResumeSessionId,
+            cwd: input.cwd,
+          }),
+        );
+      }
+
       const queryOptions: ClaudeQueryOptions = {
         ...(input.cwd ? { cwd: input.cwd } : {}),
         ...(apiModelId ? { model: apiModelId } : {}),
@@ -2866,7 +2900,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           ? { allowDangerouslySkipPermissions: true }
           : {}),
         ...(Object.keys(settings).length > 0 ? { settings } : {}),
-        ...(existingResumeSessionId ? { resume: existingResumeSessionId } : {}),
+        ...(safeResumeSessionId ? { resume: safeResumeSessionId } : {}),
         ...(newSessionId ? { sessionId: newSessionId } : {}),
         includePartialMessages: true,
         canUseTool,
