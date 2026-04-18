@@ -114,6 +114,12 @@ export interface Thread {
   worktreePath: string | null;
   turnDiffSummaries: TurnDiffSummary[];
   activities: OrchestrationThreadActivity[];
+  /**
+   * Whether this thread's full data (messages, activities, etc.) is loaded
+   * in memory. Optional because eviction from pr-1843 is not yet wired —
+   * once it is, this can be tightened to required.
+   */
+  hydrated?: boolean;
 }
 
 export interface ThreadShell {

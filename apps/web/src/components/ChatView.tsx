@@ -603,6 +603,9 @@ export default function ChatView(props: ChatViewProps) {
     ),
   );
   const setStoreThreadError = useStore((store) => store.setError);
+  // pr-1843 eviction rehydrate hook was here; removed until we have a
+  // per-thread re-subscribe primitive. Store still exposes hydrateThread.
+  void useStore;
   const markThreadVisited = useUiStateStore((store) => store.markThreadVisited);
   const activeThreadLastVisitedAt = useUiStateStore((store) =>
     routeKind === "server" ? store.threadLastVisitedAtById[routeThreadKey] : undefined,
@@ -783,6 +786,13 @@ export default function ChatView(props: ChatViewProps) {
   const isServerThread = routeKind === "server" && serverThread !== undefined;
   const activeThread = isServerThread ? serverThread : localDraftThread;
   const runtimeMode = composerRuntimeMode ?? activeThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE;
+
+  // NOTE(pr-1843): #1843's design would re-hydrate evicted threads here via
+  // a full-snapshot fetch. We deliberately skip the hydration hook: our
+  // 2a.1 server windowing rejects full snapshots, and we don't yet expose a
+  // per-thread re-subscribe primitive from environments/runtime. With
+  // eviction disabled in __root.tsx the hook is unnecessary. When a proper
+  // re-subscribe primitive lands, wire it here and flip the eviction flag.
   const interactionMode =
     composerInteractionMode ?? activeThread?.interactionMode ?? DEFAULT_INTERACTION_MODE;
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
@@ -3202,6 +3212,15 @@ export default function ChatView(props: ChatViewProps) {
     }
     void onRevertToTurnCountRef.current(targetTurnCount);
   }, []);
+
+  // Show loading state for dehydrated threads
+  if (activeThread && !activeThread.hydrated) {
+    return (
+      <div className="flex h-full items-center justify-center text-muted-foreground">
+        Loading conversation...
+      </div>
+    );
+  }
 
   // Empty state: no active thread
   if (!activeThread) {

@@ -247,6 +247,7 @@ function mapThread(thread: OrchestrationThread, environmentId: EnvironmentId): T
     worktreePath: thread.worktreePath,
     turnDiffSummaries: thread.checkpoints.map(mapTurnDiffSummary),
     activities: thread.activities.map((activity) => ({ ...activity })),
+    hydrated: true,
   };
 }
 
@@ -2002,6 +2003,14 @@ export function setThreadBranch(
   );
   return commitEnvironmentState(state, threadRef.environmentId, nextEnvironmentState);
 }
+
+// pr-1843 added evictThreadData / hydrateThread here operating on a flat
+// `state.threads` array. Our AppState is environment-scoped (threads live
+// inside environmentStateById[envId]), so those helpers would need a
+// ScopedThreadRef and a different traversal. Re-introduce when we wire
+// eviction; see comment in __root.tsx for the blocking dependency.
+
+// ── Zustand store ────────────────────────────────────────────────────
 
 interface AppStore extends AppState {
   setActiveEnvironmentId: (environmentId: EnvironmentId) => void;

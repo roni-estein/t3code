@@ -343,5 +343,13 @@ function EventRouter() {
   useServerWelcomeSubscription(handleWelcome);
   useServerConfigUpdatedSubscription(handleServerConfigUpdated);
 
+  // pr-1843 added cross-thread eviction here. We ship its crash-recovery
+  // handler + V8 heap cap (in apps/desktop/src/main.ts) but skip the
+  // eviction trigger for now: our AppState is environment-scoped (threads
+  // live under env state, not a flat array) and we don't yet expose a
+  // per-thread re-subscribe primitive for re-hydration. The store
+  // primitives evictThreadData / hydrateThread remain available for when
+  // those two pieces land.
+
   return null;
 }
