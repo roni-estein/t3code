@@ -37,6 +37,27 @@ export interface ProjectionThreadCheckpointContext {
 }
 
 /**
+ * Caps applied to getThreadDetailById. When `messageLimit` is set, only the
+ * most recent N messages (by created_at) are returned; likewise for
+ * activities. Callers that need the full history should pass Infinity (or
+ * omit the options to get the default — a safety cap rather than unbounded).
+ */
+export interface ProjectionThreadDetailWindow {
+  readonly messageLimit?: number;
+  readonly activityLimit?: number;
+}
+
+/**
+ * Default caps used when a caller does not supply its own window. These are
+ * tuned to keep the initial WebSocket payload small enough that the renderer
+ * can deserialize it without V8 heap pressure on huge threads.
+ */
+export const DEFAULT_THREAD_DETAIL_WINDOW: Required<ProjectionThreadDetailWindow> = {
+  messageLimit: 100,
+  activityLimit: 500,
+};
+
+/**
  * ProjectionSnapshotQueryShape - Service API for read-model snapshots.
  */
 export interface ProjectionSnapshotQueryShape {
@@ -101,9 +122,14 @@ export interface ProjectionSnapshotQueryShape {
 
   /**
    * Read a single active thread detail snapshot by id.
+   *
+   * A `window` cap is applied to messages and activities to keep payload size
+   * bounded. Pass `DEFAULT_THREAD_DETAIL_WINDOW` or a custom window; omitting
+   * the argument applies the default.
    */
   readonly getThreadDetailById: (
     threadId: ThreadId,
+    window?: ProjectionThreadDetailWindow,
   ) => Effect.Effect<Option.Option<OrchestrationThread>, ProjectionRepositoryError>;
 }
 

@@ -44,6 +44,7 @@ import { ProjectionThread } from "../../persistence/Services/ProjectionThreads.t
 import { RepositoryIdentityResolver } from "../../project/Services/RepositoryIdentityResolver.ts";
 import { ORCHESTRATION_PROJECTOR_NAMES } from "./ProjectionPipeline.ts";
 import {
+  DEFAULT_THREAD_DETAIL_WINDOW,
   ProjectionSnapshotQuery,
   type ProjectionSnapshotCounts,
   type ProjectionThreadCheckpointContext,
@@ -107,6 +108,10 @@ const ProjectIdLookupInput = Schema.Struct({
 });
 const ThreadIdLookupInput = Schema.Struct({
   threadId: ThreadId,
+});
+const ThreadIdWithLimitInput = Schema.Struct({
+  threadId: ThreadId,
+  limit: Schema.Int,
 });
 const ProjectionProjectLookupRowSchema = ProjectionProjectDbRowSchema;
 const ProjectionThreadIdLookupRowSchema = Schema.Struct({
@@ -596,6 +601,90 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           sequence ASC,
           created_at ASC,
           activity_id ASC
+      `,
+  });
+
+  // Windowed variants used by getThreadDetailById when a detail-window is
+  // requested (default on every subscribeThread call). Large threads would
+  // otherwise ship 1000s of rows in a single WebSocket payload and blow the
+  // renderer heap. Tail-first: pick the newest N, then reverse so the caller
+  // receives them in ascending chronological order like the unbounded
+  // variants.
+  const listRecentThreadMessageRowsByThread = SqlSchema.findAll({
+    Request: ThreadIdWithLimitInput,
+    Result: ProjectionThreadMessageDbRowSchema,
+    execute: ({ threadId, limit }) =>
+      sql`
+        SELECT
+          "messageId",
+          "threadId",
+          "turnId",
+          role,
+          text,
+          attachments,
+          "isStreaming",
+          "createdAt",
+          "updatedAt"
+        FROM (
+          SELECT
+            message_id AS "messageId",
+            thread_id AS "threadId",
+            turn_id AS "turnId",
+            role,
+            text,
+            attachments_json AS "attachments",
+            is_streaming AS "isStreaming",
+            created_at AS "createdAt",
+            updated_at AS "updatedAt"
+          FROM projection_thread_messages
+          WHERE thread_id = ${threadId}
+          ORDER BY created_at DESC, message_id DESC
+          LIMIT ${limit}
+        )
+        ORDER BY "createdAt" ASC, "messageId" ASC
+      `,
+  });
+
+  const listRecentThreadActivityRowsByThread = SqlSchema.findAll({
+    Request: ThreadIdWithLimitInput,
+    Result: ProjectionThreadActivityDbRowSchema,
+    execute: ({ threadId, limit }) =>
+      sql`
+        SELECT
+          "activityId",
+          "threadId",
+          "turnId",
+          tone,
+          kind,
+          summary,
+          payload,
+          sequence,
+          "createdAt"
+        FROM (
+          SELECT
+            activity_id AS "activityId",
+            thread_id AS "threadId",
+            turn_id AS "turnId",
+            tone,
+            kind,
+            summary,
+            payload_json AS "payload",
+            sequence,
+            created_at AS "createdAt"
+          FROM projection_thread_activities
+          WHERE thread_id = ${threadId}
+          ORDER BY
+            CASE WHEN sequence IS NULL THEN 0 ELSE 1 END DESC,
+            sequence DESC,
+            created_at DESC,
+            activity_id DESC
+          LIMIT ${limit}
+        )
+        ORDER BY
+          CASE WHEN sequence IS NULL THEN 0 ELSE 1 END ASC,
+          sequence ASC,
+          "createdAt" ASC,
+          "activityId" ASC
       `,
   });
 
@@ -1268,8 +1357,21 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       } satisfies OrchestrationThreadShell);
     });
 
-  const getThreadDetailById: ProjectionSnapshotQueryShape["getThreadDetailById"] = (threadId) =>
+  const getThreadDetailById: ProjectionSnapshotQueryShape["getThreadDetailById"] = (
+    threadId,
+    window,
+  ) =>
     Effect.gen(function* () {
+      const messageLimit = window?.messageLimit ?? DEFAULT_THREAD_DETAIL_WINDOW.messageLimit;
+      const activityLimit = window?.activityLimit ?? DEFAULT_THREAD_DETAIL_WINDOW.activityLimit;
+      // Callers who explicitly want the full history can pass Infinity; any
+      // finite limit triggers the tail-first windowed queries.
+      const messagesQuery = Number.isFinite(messageLimit)
+        ? listRecentThreadMessageRowsByThread({ threadId, limit: Math.floor(messageLimit) })
+        : listThreadMessageRowsByThread({ threadId });
+      const activitiesQuery = Number.isFinite(activityLimit)
+        ? listRecentThreadActivityRowsByThread({ threadId, limit: Math.floor(activityLimit) })
+        : listThreadActivityRowsByThread({ threadId });
       const [
         threadRow,
         messageRows,
@@ -1287,7 +1389,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             ),
           ),
         ),
-        listThreadMessageRowsByThread({ threadId }).pipe(
+        messagesQuery.pipe(
           Effect.mapError(
             toPersistenceSqlOrDecodeError(
               "ProjectionSnapshotQuery.getThreadDetailById:listMessages:query",
@@ -1303,7 +1405,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             ),
           ),
         ),
-        listThreadActivityRowsByThread({ threadId }).pipe(
+        activitiesQuery.pipe(
           Effect.mapError(
             toPersistenceSqlOrDecodeError(
               "ProjectionSnapshotQuery.getThreadDetailById:listActivities:query",
