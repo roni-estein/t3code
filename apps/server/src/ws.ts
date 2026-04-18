@@ -662,6 +662,26 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             ),
             { "rpc.aggregate": "orchestration" },
           ),
+        [ORCHESTRATION_WS_METHODS.loadOlderThreadMessages]: (input) =>
+          observeRpcEffect(
+            ORCHESTRATION_WS_METHODS.loadOlderThreadMessages,
+            projectionSnapshotQuery
+              .listOlderThreadMessages({
+                threadId: input.threadId,
+                beforeCreatedAt: input.beforeCreatedAt,
+                limit: input.limit,
+              })
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestrationGetSnapshotError({
+                      message: `Failed to load older messages for thread ${input.threadId}`,
+                      cause,
+                    }),
+                ),
+              ),
+            { "rpc.aggregate": "orchestration" },
+          ),
         [ORCHESTRATION_WS_METHODS.subscribeShell]: (_input) =>
           observeRpcStreamEffect(
             ORCHESTRATION_WS_METHODS.subscribeShell,

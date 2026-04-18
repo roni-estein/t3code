@@ -20,6 +20,7 @@ export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
   getTurnDiff: "orchestration.getTurnDiff",
   getFullThreadDiff: "orchestration.getFullThreadDiff",
+  loadOlderThreadMessages: "orchestration.loadOlderThreadMessages",
   replayEvents: "orchestration.replayEvents",
   subscribeShell: "orchestration.subscribeShell",
   subscribeThread: "orchestration.subscribeThread",
@@ -1143,6 +1144,35 @@ export const OrchestrationReplayEventsInput = Schema.Struct({
 });
 export type OrchestrationReplayEventsInput = typeof OrchestrationReplayEventsInput.Type;
 
+/**
+ * Load a page of messages older than a given cursor. Used by the client's
+ * scroll-up handler after the initial windowed subscribeThread payload.
+ *
+ * `beforeCreatedAt` is the oldest-visible message's createdAt; the server
+ * returns up to `limit` messages strictly older than that, ordered
+ * ascending by createdAt (so the client can prepend them to the list
+ * naturally). Activities for those turn_ids are included.
+ */
+export const OrchestrationLoadOlderThreadMessagesInput = Schema.Struct({
+  threadId: ThreadId,
+  beforeCreatedAt: IsoDateTime,
+  limit: NonNegativeInt,
+});
+export type OrchestrationLoadOlderThreadMessagesInput =
+  typeof OrchestrationLoadOlderThreadMessagesInput.Type;
+
+export const OrchestrationLoadOlderThreadMessagesResult = Schema.Struct({
+  messages: Schema.Array(OrchestrationMessage),
+  activities: Schema.Array(OrchestrationThreadActivity),
+  /**
+   * True when the returned page reached the oldest message in the thread.
+   * Client should stop firing scroll-up loads once this is seen.
+   */
+  reachedStart: Schema.Boolean,
+});
+export type OrchestrationLoadOlderThreadMessagesResult =
+  typeof OrchestrationLoadOlderThreadMessagesResult.Type;
+
 const OrchestrationReplayEventsResult = Schema.Array(OrchestrationEvent);
 export type OrchestrationReplayEventsResult = typeof OrchestrationReplayEventsResult.Type;
 
@@ -1158,6 +1188,10 @@ export const OrchestrationRpcSchemas = {
   getFullThreadDiff: {
     input: OrchestrationGetFullThreadDiffInput,
     output: OrchestrationGetFullThreadDiffResult,
+  },
+  loadOlderThreadMessages: {
+    input: OrchestrationLoadOlderThreadMessagesInput,
+    output: OrchestrationLoadOlderThreadMessagesResult,
   },
   replayEvents: {
     input: OrchestrationReplayEventsInput,

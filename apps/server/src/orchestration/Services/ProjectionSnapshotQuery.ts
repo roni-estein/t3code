@@ -7,12 +7,15 @@
  * @module ProjectionSnapshotQuery
  */
 import type {
+  IsoDateTime,
   OrchestrationCheckpointSummary,
+  OrchestrationMessage,
   OrchestrationProject,
   OrchestrationProjectShell,
   OrchestrationReadModel,
   OrchestrationShellSnapshot,
   OrchestrationThread,
+  OrchestrationThreadActivity,
   OrchestrationThreadShell,
   ProjectId,
   ThreadId,
@@ -131,6 +134,28 @@ export interface ProjectionSnapshotQueryShape {
     threadId: ThreadId,
     window?: ProjectionThreadDetailWindow,
   ) => Effect.Effect<Option.Option<OrchestrationThread>, ProjectionRepositoryError>;
+
+  /**
+   * Load a page of messages and activities strictly older than a given
+   * created-at cursor. Used for scroll-up pagination after the initial
+   * windowed getThreadDetailById payload.
+   *
+   * Returns messages in ascending chronological order (so callers can
+   * prepend naturally) and the activities matching those turn windows.
+   * `reachedStart` signals to the client that no further pages exist.
+   */
+  readonly listOlderThreadMessages: (input: {
+    readonly threadId: ThreadId;
+    readonly beforeCreatedAt: IsoDateTime;
+    readonly limit: number;
+  }) => Effect.Effect<
+    {
+      readonly messages: ReadonlyArray<OrchestrationMessage>;
+      readonly activities: ReadonlyArray<OrchestrationThreadActivity>;
+      readonly reachedStart: boolean;
+    },
+    ProjectionRepositoryError
+  >;
 }
 
 /**

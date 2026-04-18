@@ -113,6 +113,11 @@ const ThreadIdWithLimitInput = Schema.Struct({
   threadId: ThreadId,
   limit: Schema.Int,
 });
+const ThreadIdBeforeCursorInput = Schema.Struct({
+  threadId: ThreadId,
+  beforeCreatedAt: Schema.String,
+  limit: Schema.Int,
+});
 const ProjectionProjectLookupRowSchema = ProjectionProjectDbRowSchema;
 const ProjectionThreadIdLookupRowSchema = Schema.Struct({
   threadId: ThreadId,
@@ -642,6 +647,90 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           LIMIT ${limit}
         )
         ORDER BY "createdAt" ASC, "messageId" ASC
+      `,
+  });
+
+  // Before-cursor variants for scroll-up pagination on big threads. Order
+  // DESC in the inner query (newest-of-the-older-set first so LIMIT slices
+  // the right N), then ASC outside so the caller receives
+  // oldest-first-of-the-page and can prepend to its view cleanly.
+  const listThreadMessageRowsBefore = SqlSchema.findAll({
+    Request: ThreadIdBeforeCursorInput,
+    Result: ProjectionThreadMessageDbRowSchema,
+    execute: ({ threadId, beforeCreatedAt, limit }) =>
+      sql`
+        SELECT
+          "messageId",
+          "threadId",
+          "turnId",
+          role,
+          text,
+          attachments,
+          "isStreaming",
+          "createdAt",
+          "updatedAt"
+        FROM (
+          SELECT
+            message_id AS "messageId",
+            thread_id AS "threadId",
+            turn_id AS "turnId",
+            role,
+            text,
+            attachments_json AS "attachments",
+            is_streaming AS "isStreaming",
+            created_at AS "createdAt",
+            updated_at AS "updatedAt"
+          FROM projection_thread_messages
+          WHERE thread_id = ${threadId}
+            AND created_at < ${beforeCreatedAt}
+          ORDER BY created_at DESC, message_id DESC
+          LIMIT ${limit}
+        )
+        ORDER BY "createdAt" ASC, "messageId" ASC
+      `,
+  });
+
+  const listThreadActivityRowsBefore = SqlSchema.findAll({
+    Request: ThreadIdBeforeCursorInput,
+    Result: ProjectionThreadActivityDbRowSchema,
+    execute: ({ threadId, beforeCreatedAt, limit }) =>
+      sql`
+        SELECT
+          "activityId",
+          "threadId",
+          "turnId",
+          tone,
+          kind,
+          summary,
+          payload,
+          sequence,
+          "createdAt"
+        FROM (
+          SELECT
+            activity_id AS "activityId",
+            thread_id AS "threadId",
+            turn_id AS "turnId",
+            tone,
+            kind,
+            summary,
+            payload_json AS "payload",
+            sequence,
+            created_at AS "createdAt"
+          FROM projection_thread_activities
+          WHERE thread_id = ${threadId}
+            AND created_at < ${beforeCreatedAt}
+          ORDER BY
+            CASE WHEN sequence IS NULL THEN 0 ELSE 1 END DESC,
+            sequence DESC,
+            created_at DESC,
+            activity_id DESC
+          LIMIT ${limit}
+        )
+        ORDER BY
+          CASE WHEN sequence IS NULL THEN 0 ELSE 1 END ASC,
+          sequence ASC,
+          "createdAt" ASC,
+          "activityId" ASC
       `,
   });
 
@@ -1517,6 +1606,80 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       );
     });
 
+  const listOlderThreadMessages: ProjectionSnapshotQueryShape["listOlderThreadMessages"] = ({
+    threadId,
+    beforeCreatedAt,
+    limit,
+  }) =>
+    Effect.gen(function* () {
+      const safeLimit = Math.max(1, Math.min(Math.floor(limit), 500));
+      const [messageRows, activityRows] = yield* Effect.all([
+        listThreadMessageRowsBefore({ threadId, beforeCreatedAt, limit: safeLimit }).pipe(
+          Effect.mapError(
+            toPersistenceSqlOrDecodeError(
+              "ProjectionSnapshotQuery.listOlderThreadMessages:messages:query",
+              "ProjectionSnapshotQuery.listOlderThreadMessages:messages:decodeRows",
+            ),
+          ),
+        ),
+        listThreadActivityRowsBefore({
+          threadId,
+          beforeCreatedAt,
+          // Activities are denser than messages; widen the fetch so the UI
+          // has the related tool calls / diffs / approvals for the page we
+          // just loaded.
+          limit: safeLimit * 5,
+        }).pipe(
+          Effect.mapError(
+            toPersistenceSqlOrDecodeError(
+              "ProjectionSnapshotQuery.listOlderThreadMessages:activities:query",
+              "ProjectionSnapshotQuery.listOlderThreadMessages:activities:decodeRows",
+            ),
+          ),
+        ),
+      ]);
+
+      const messages: ReadonlyArray<OrchestrationMessage> = messageRows.map((row) => {
+        const base = {
+          id: row.messageId,
+          role: row.role,
+          text: row.text,
+          turnId: row.turnId,
+          streaming: row.isStreaming === 1,
+          createdAt: row.createdAt,
+          updatedAt: row.updatedAt,
+        };
+        return row.attachments !== null
+          ? (Object.assign(base, { attachments: row.attachments }) as OrchestrationMessage)
+          : (base as OrchestrationMessage);
+      });
+      const activities: ReadonlyArray<OrchestrationThreadActivity> = activityRows.map((row) => {
+        const base = {
+          id: row.activityId,
+          tone: row.tone,
+          kind: row.kind,
+          summary: row.summary,
+          payload: row.payload,
+          turnId: row.turnId,
+          createdAt: row.createdAt,
+        };
+        return row.sequence !== null
+          ? (Object.assign(base, { sequence: row.sequence }) as OrchestrationThreadActivity)
+          : (base as OrchestrationThreadActivity);
+      });
+
+      // Short-circuit the "is there more?" question: if we asked for N and
+      // got fewer than N, we've hit the start of history. Clients stop
+      // firing further scroll-up loads.
+      const reachedStart = messages.length < safeLimit;
+
+      return {
+        messages,
+        activities,
+        reachedStart,
+      };
+    });
+
   return {
     getSnapshot,
     getShellSnapshot,
@@ -1527,6 +1690,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     getThreadCheckpointContext,
     getThreadShellById,
     getThreadDetailById,
+    listOlderThreadMessages,
   } satisfies ProjectionSnapshotQueryShape;
 });
 

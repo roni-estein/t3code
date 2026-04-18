@@ -158,6 +158,8 @@ describe("OrchestrationEngine", () => {
           getThreadCheckpointContext: () => Effect.succeed(Option.none()),
           getThreadShellById: () => Effect.succeed(Option.none()),
           getThreadDetailById: () => Effect.succeed(Option.none()),
+          listOlderThreadMessages: () =>
+            Effect.succeed({ messages: [], activities: [], reachedStart: true }),
         }),
       ),
       Layer.provide(
