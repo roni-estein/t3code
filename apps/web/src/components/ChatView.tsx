@@ -603,9 +603,6 @@ export default function ChatView(props: ChatViewProps) {
     ),
   );
   const setStoreThreadError = useStore((store) => store.setError);
-  // pr-1843 eviction rehydrate hook was here; removed until we have a
-  // per-thread re-subscribe primitive. Store still exposes hydrateThread.
-  void useStore;
   const markThreadVisited = useUiStateStore((store) => store.markThreadVisited);
   const activeThreadLastVisitedAt = useUiStateStore((store) =>
     routeKind === "server" ? store.threadLastVisitedAtById[routeThreadKey] : undefined,
@@ -3212,15 +3209,6 @@ export default function ChatView(props: ChatViewProps) {
     }
     void onRevertToTurnCountRef.current(targetTurnCount);
   }, []);
-
-  // Show loading state for dehydrated threads
-  if (activeThread && !activeThread.hydrated) {
-    return (
-      <div className="flex h-full items-center justify-center text-muted-foreground">
-        Loading conversation...
-      </div>
-    );
-  }
 
   // Empty state: no active thread
   if (!activeThread) {
