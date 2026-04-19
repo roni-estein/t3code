@@ -92,6 +92,7 @@ import {
 import { useTheme } from "../hooks/useTheme";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { useCommandPaletteStore } from "../commandPaletteStore";
+import { useThreadSelectionStore } from "../threadSelectionStore";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
@@ -657,6 +658,20 @@ export default function ChatView(props: ChatViewProps) {
   const promptRef = useRef("");
   const composerImagesRef = useRef<ComposerImageAttachment[]>([]);
   const composerTerminalContextsRef = useRef<TerminalContextDraft[]>([]);
+  // Snapshot of the last prompt we sent, per thread. Used by onInterrupt
+  // (Stop button / Escape) to repopulate the composer with what the user
+  // just sent so they can edit or delete it rather than wait for the turn
+  // to finish.
+  const lastSentMessageByThreadIdRef = useRef<
+    Record<
+      string,
+      {
+        prompt: string;
+        composerImages: ComposerImageAttachment[];
+        composerTerminalContexts: TerminalContextDraft[];
+      }
+    >
+  >({});
   const localComposerRef = useRef<ChatComposerHandle | null>(null);
   const composerRef = useComposerHandleContext() ?? localComposerRef;
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
@@ -1431,7 +1446,10 @@ export default function ChatView(props: ChatViewProps) {
   ]);
   const completionDividerBeforeEntryId = useMemo(() => {
     if (!latestTurnSettled) return null;
-    if (!completionSummary) return null;
+    const isInterruptedTurn = activeLatestTurn?.state === "interrupted";
+    // Interrupted turns always get a divider so the user can see where the
+    // turn was stopped, even if no tool activity happened.
+    if (!completionSummary && !isInterruptedTurn) return null;
     return deriveCompletionDividerBeforeEntryId(timelineEntries, activeLatestTurn);
   }, [activeLatestTurn, completionSummary, latestTurnSettled, timelineEntries]);
   const gitCwd = activeProject
@@ -2530,6 +2548,11 @@ export default function ChatView(props: ChatViewProps) {
         description: toastCopy.description,
       });
     }
+    lastSentMessageByThreadIdRef.current[threadIdForSend] = {
+      prompt: promptForSend,
+      composerImages: composerImagesSnapshot.map(cloneComposerImageForRetry),
+      composerTerminalContexts: composerTerminalContextsSnapshot,
+    };
     promptRef.current = "";
     clearComposerDraftContent(composerDraftTarget);
     composerRef.current?.resetCursorState();
@@ -2676,13 +2699,62 @@ export default function ChatView(props: ChatViewProps) {
   const onInterrupt = async () => {
     const api = readEnvironmentApi(environmentId);
     if (!api || !activeThread) return;
+    const threadIdForInterrupt = activeThread.id;
     await api.orchestration.dispatchCommand({
       type: "thread.turn.interrupt",
       commandId: newCommandId(),
-      threadId: activeThread.id,
+      threadId: threadIdForInterrupt,
       createdAt: new Date().toISOString(),
     });
+    // Mirror Escape's behavior in Claude Code: after stopping the turn,
+    // repopulate the composer with the last sent prompt so the user can
+    // edit or delete it. Only restore when the composer is empty — if the
+    // user has started a new draft we must not clobber it.
+    const lastSnapshot = lastSentMessageByThreadIdRef.current[threadIdForInterrupt];
+    if (
+      lastSnapshot &&
+      promptRef.current.length === 0 &&
+      composerImagesRef.current.length === 0 &&
+      composerTerminalContextsRef.current.length === 0
+    ) {
+      const retryComposerImages = lastSnapshot.composerImages.map(cloneComposerImageForRetry);
+      promptRef.current = lastSnapshot.prompt;
+      composerImagesRef.current = retryComposerImages;
+      composerTerminalContextsRef.current = lastSnapshot.composerTerminalContexts;
+      setComposerDraftPrompt(composerDraftTarget, lastSnapshot.prompt);
+      addComposerDraftImages(composerDraftTarget, retryComposerImages);
+      setComposerDraftTerminalContexts(composerDraftTarget, lastSnapshot.composerTerminalContexts);
+      composerRef.current?.resetCursorState({
+        cursor: collapseExpandedComposerCursor(lastSnapshot.prompt, lastSnapshot.prompt.length),
+        prompt: lastSnapshot.prompt,
+        detectTrigger: true,
+      });
+      focusComposer();
+    }
   };
+
+  // Escape key is a shortcut for the Stop button while a turn is running —
+  // mirrors the behavior users expect from terminal CLIs like Claude Code.
+  const onInterruptRef = useRef(onInterrupt);
+  onInterruptRef.current = onInterrupt;
+  useEffect(() => {
+    if (!isWorking || !activeThreadId) {
+      return;
+    }
+    const handler = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
+      if (event.key !== "Escape") return;
+      if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+      // Let the global Escape handler clear thread selection first.
+      if (useThreadSelectionStore.getState().selectedThreadKeys.size > 0) return;
+      if (useCommandPaletteStore.getState().open) return;
+      event.preventDefault();
+      event.stopPropagation();
+      void onInterruptRef.current();
+    };
+    window.addEventListener("keydown", handler, true);
+    return () => window.removeEventListener("keydown", handler, true);
+  }, [isWorking, activeThreadId]);
 
   const onRespondToApproval = useCallback(
     async (requestId: ApprovalRequestId, decision: ProviderApprovalDecision) => {
@@ -3282,6 +3354,7 @@ export default function ChatView(props: ChatViewProps) {
               timelineEntries={timelineEntries}
               completionDividerBeforeEntryId={completionDividerBeforeEntryId}
               completionSummary={completionSummary}
+              latestTurnState={activeLatestTurn?.state ?? null}
               turnDiffSummaryByAssistantMessageId={turnDiffSummaryByAssistantMessageId}
               activeThreadEnvironmentId={activeThread.environmentId}
               routeThreadKey={routeThreadKey}

@@ -1,4 +1,9 @@
-import { type EnvironmentId, type MessageId, type TurnId } from "@t3tools/contracts";
+import {
+  type EnvironmentId,
+  type MessageId,
+  type OrchestrationLatestTurnState,
+  type TurnId,
+} from "@t3tools/contracts";
 import {
   createContext,
   memo,
@@ -75,6 +80,7 @@ interface TimelineRowSharedState {
   isWorking: boolean;
   isRevertingCheckpoint: boolean;
   completionSummary: string | null;
+  latestTurnState: OrchestrationLatestTurnState | null;
   timestampFormat: TimestampFormat;
   routeThreadKey: string;
   markdownCwd: string | undefined;
@@ -101,6 +107,7 @@ interface MessagesTimelineProps {
   timelineEntries: ReturnType<typeof deriveTimelineEntries>;
   completionDividerBeforeEntryId: string | null;
   completionSummary: string | null;
+  latestTurnState: OrchestrationLatestTurnState | null;
   turnDiffSummaryByAssistantMessageId: Map<MessageId, TurnDiffSummary>;
   routeThreadKey: string;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
@@ -129,6 +136,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   timelineEntries,
   completionDividerBeforeEntryId,
   completionSummary,
+  latestTurnState,
   turnDiffSummaryByAssistantMessageId,
   routeThreadKey,
   onOpenTurnDiff,
@@ -198,6 +206,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       isWorking,
       isRevertingCheckpoint,
       completionSummary,
+      latestTurnState,
       timestampFormat,
       routeThreadKey,
       markdownCwd,
@@ -214,6 +223,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       isWorking,
       isRevertingCheckpoint,
       completionSummary,
+      latestTurnState,
       timestampFormat,
       routeThreadKey,
       markdownCwd,
@@ -392,15 +402,39 @@ function TimelineRowContent({ row }: { row: TimelineRow }) {
           });
           return (
             <>
-              {row.showCompletionDivider && (
-                <div className="my-3 flex items-center gap-3">
-                  <span className="h-px flex-1 bg-border" />
-                  <span className="rounded-full border border-border bg-background px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-muted-foreground/80">
-                    {ctx.completionSummary ? `Response • ${ctx.completionSummary}` : "Response"}
-                  </span>
-                  <span className="h-px flex-1 bg-border" />
-                </div>
-              )}
+              {row.showCompletionDivider &&
+                (() => {
+                  const interrupted =
+                    ctx.latestTurnState === "interrupted" &&
+                    row.message.turnId === ctx.activeTurnId;
+                  const label = interrupted
+                    ? ctx.completionSummary
+                      ? `Interrupted • ${ctx.completionSummary}`
+                      : "Interrupted"
+                    : ctx.completionSummary
+                      ? `Response • ${ctx.completionSummary}`
+                      : "Response";
+                  return (
+                    <div className="my-3 flex items-center gap-3">
+                      <span
+                        className={cn("h-px flex-1", interrupted ? "bg-amber-500/40" : "bg-border")}
+                      />
+                      <span
+                        className={cn(
+                          "rounded-full border px-2.5 py-1 text-[10px] uppercase tracking-[0.14em]",
+                          interrupted
+                            ? "border-amber-500/60 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+                            : "border-border bg-background text-muted-foreground/80",
+                        )}
+                      >
+                        {label}
+                      </span>
+                      <span
+                        className={cn("h-px flex-1", interrupted ? "bg-amber-500/40" : "bg-border")}
+                      />
+                    </div>
+                  );
+                })()}
               <div className="min-w-0 px-1 py-0.5">
                 <ChatMarkdown
                   text={messageText}
