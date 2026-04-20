@@ -11,13 +11,13 @@ import {
   type ProviderApprovalDecision,
   type ServerProvider,
   type ScopedThreadRef,
-  type ThreadId,
   type TurnId,
   type KeybindingCommand,
   OrchestrationThreadActivity,
   ProviderInteractionMode,
   RuntimeMode,
   TerminalOpenInput,
+  ThreadId,
 } from "@t3tools/contracts";
 import {
   parseScopedThreadKey,
@@ -1960,17 +1960,26 @@ export default function ChatView(props: ChatViewProps) {
   // outlives the composer.
   // ---------------------------------------------------------------
   const [recoveryOverlayOpen, setRecoveryOverlayOpen] = useState(false);
-  const handleTriggerThreadRecovery = useCallback(() => {
-    if (!activeThread) {
-      toastManager.add({
-        type: "warning",
-        title: "Cannot recover",
-        description: "Open a thread before running /recover-thread.",
-      });
-      return;
-    }
-    setRecoveryOverlayOpen(true);
-  }, [activeThread]);
+  // When a user types `/recover-thread <uuid>` the overlay targets the
+  // supplied thread instead of the active one. `null` (the default)
+  // means "use the active thread". Reset back to null whenever the
+  // overlay closes so the next invocation gets a clean slate.
+  const [recoveryThreadOverride, setRecoveryThreadOverride] = useState<ThreadId | null>(null);
+  const handleTriggerThreadRecovery = useCallback(
+    (overrideThreadId?: ThreadId | null) => {
+      if (!activeThread && !overrideThreadId) {
+        toastManager.add({
+          type: "warning",
+          title: "Cannot recover",
+          description: "Open a thread before running /recover-thread.",
+        });
+        return;
+      }
+      setRecoveryThreadOverride(overrideThreadId ?? null);
+      setRecoveryOverlayOpen(true);
+    },
+    [activeThread],
+  );
   const handleDebugBreakThread = useCallback(() => {
     if (!activeThread || !environmentId) {
       toastManager.add({
@@ -2006,6 +2015,117 @@ export default function ChatView(props: ChatViewProps) {
         });
       });
   }, [activeThread, environmentId]);
+
+  // /diagnose-thread [<uuid>] — read-only divergence report. Surfaces
+  // the projection vs runtime drift so the user can decide whether a
+  // reconcile is warranted without applying any fix.
+  const handleDiagnoseThread = useCallback(
+    (overrideThreadId: ThreadId | null) => {
+      const targetId = overrideThreadId ?? activeThread?.id ?? null;
+      if (!targetId || !environmentId) {
+        toastManager.add({
+          type: "warning",
+          title: "Cannot diagnose",
+          description: "Open a thread (or pass a uuid) before running /diagnose-thread.",
+        });
+        return;
+      }
+      const api = readEnvironmentApi(environmentId);
+      if (!api) {
+        toastManager.add({
+          type: "error",
+          title: "Environment not connected",
+          description: "Pair the environment before running /diagnose-thread.",
+        });
+        return;
+      }
+      void api.threadRecovery
+        .diagnose({ threadId: targetId })
+        .then((report) => {
+          const lines = [
+            `sessionStatus: ${report.sessionStatus ?? "∅"}`,
+            `activeTurnId: ${report.activeTurnId ?? "∅"}`,
+            `activeTurnState: ${report.activeTurnState ?? "∅"}`,
+            `runtimeStatus: ${report.runtimeStatus ?? "∅"}`,
+            report.isStuck ? `stuck: ${report.stuckReason ?? "yes"}` : "stuck: no",
+          ];
+          toastManager.add({
+            type: report.isStuck ? "warning" : "info",
+            title: report.isStuck ? "Thread appears stuck" : "Thread looks healthy",
+            description: lines.join(" · "),
+          });
+        })
+        .catch((error: unknown) => {
+          toastManager.add({
+            type: "error",
+            title: "Failed to diagnose thread",
+            description: error instanceof Error ? error.message : String(error),
+          });
+        });
+    },
+    [activeThread, environmentId],
+  );
+
+  // /reconcile-thread [<uuid>] — run Phase-1 reconciliation on demand.
+  // Idempotent at the server (synthetic `session.ready` event); safe
+  // to spam.
+  const handleReconcileThread = useCallback(
+    (overrideThreadId: ThreadId | null) => {
+      const targetId = overrideThreadId ?? activeThread?.id ?? null;
+      if (!targetId || !environmentId) {
+        toastManager.add({
+          type: "warning",
+          title: "Cannot reconcile",
+          description: "Open a thread (or pass a uuid) before running /reconcile-thread.",
+        });
+        return;
+      }
+      const api = readEnvironmentApi(environmentId);
+      if (!api) {
+        toastManager.add({
+          type: "error",
+          title: "Environment not connected",
+          description: "Pair the environment before running /reconcile-thread.",
+        });
+        return;
+      }
+      void api.threadRecovery
+        .reconcile({ threadId: targetId })
+        .then((outcome) => {
+          switch (outcome._tag) {
+            case "reconciled":
+              toastManager.add({
+                type: "info",
+                title: "Reconciled thread session",
+                description: `Cleared stuck state: ${outcome.report.stuckReason ?? "reconciled"}`,
+              });
+              break;
+            case "not-stuck":
+              toastManager.add({
+                type: "info",
+                title: "Nothing to reconcile",
+                description: "Thread is already in a healthy state.",
+              });
+              break;
+            case "thread-missing":
+              toastManager.add({
+                type: "warning",
+                title: "Unknown thread",
+                description: `No thread found for ${outcome.threadId}.`,
+              });
+              break;
+          }
+        })
+        .catch((error: unknown) => {
+          toastManager.add({
+            type: "error",
+            title: "Failed to reconcile thread",
+            description: error instanceof Error ? error.message : String(error),
+          });
+        });
+    },
+    [activeThread, environmentId],
+  );
   const togglePlanSidebar = useCallback(() => {
     setPlanSidebarOpen((open) => {
       if (open) {
@@ -2507,19 +2627,28 @@ export default function ChatView(props: ChatViewProps) {
         ? parseStandaloneComposerSlashCommand(trimmed)
         : null;
     if (standaloneSlashCommand) {
-      switch (standaloneSlashCommand) {
+      const overrideThreadId = standaloneSlashCommand.threadId
+        ? ThreadId.make(standaloneSlashCommand.threadId)
+        : null;
+      switch (standaloneSlashCommand.command) {
         case "plan":
         case "default":
-          handleInteractionModeChange(standaloneSlashCommand);
+          handleInteractionModeChange(standaloneSlashCommand.command);
           break;
         case "recover-thread":
-          handleTriggerThreadRecovery();
+          handleTriggerThreadRecovery(overrideThreadId);
           break;
         case "debug-break-thread":
           handleDebugBreakThread();
           break;
+        case "diagnose-thread":
+          handleDiagnoseThread(overrideThreadId);
+          break;
+        case "reconcile-thread":
+          handleReconcileThread(overrideThreadId);
+          break;
         default: {
-          const _exhaustive: never = standaloneSlashCommand;
+          const _exhaustive: never = standaloneSlashCommand.command;
           return _exhaustive;
         }
       }
@@ -3526,8 +3655,10 @@ export default function ChatView(props: ChatViewProps) {
               toggleInteractionMode={toggleInteractionMode}
               handleRuntimeModeChange={handleRuntimeModeChange}
               handleInteractionModeChange={handleInteractionModeChange}
-              handleTriggerThreadRecovery={handleTriggerThreadRecovery}
+              handleTriggerThreadRecovery={() => handleTriggerThreadRecovery(null)}
               handleDebugBreakThread={handleDebugBreakThread}
+              handleDiagnoseThread={() => handleDiagnoseThread(null)}
+              handleReconcileThread={() => handleReconcileThread(null)}
               togglePlanSidebar={togglePlanSidebar}
               focusComposer={focusComposer}
               scheduleComposerFocus={scheduleComposerFocus}
@@ -3636,18 +3767,26 @@ export default function ChatView(props: ChatViewProps) {
 
       {/*
        * Recovery waterfall overlay. Opens when the user runs
-       * `/recover-thread`. Takes its identity from the current active
-       * thread; unmounts when the user closes it or switches threads
-       * (changing `activeThread?.id` forces a remount).
+       * `/recover-thread` — either on the active thread (default) or
+       * on a thread passed as a uuid arg (`/recover-thread <uuid>`,
+       * carried via `recoveryThreadOverride`). The override only
+       * targets the recovery RPC; the `cwd` is still taken from the
+       * active project because the overlay UI lives inside the active
+       * thread's view.
        */}
-      {activeThread && activeProjectCwd ? (
+      {(activeThread || recoveryThreadOverride) && activeProjectCwd ? (
         <RecoveryProgressOverlay
-          key={activeThread.id}
+          key={recoveryThreadOverride ?? activeThread?.id ?? "no-thread"}
           open={recoveryOverlayOpen}
           environmentId={environmentId}
-          threadId={activeThread.id}
+          threadId={recoveryThreadOverride ?? activeThread!.id}
           cwd={activeProjectCwd}
-          onOpenChange={setRecoveryOverlayOpen}
+          onOpenChange={(open) => {
+            setRecoveryOverlayOpen(open);
+            if (!open) {
+              setRecoveryThreadOverride(null);
+            }
+          }}
         />
       ) : null}
     </div>

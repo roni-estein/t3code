@@ -1,5 +1,6 @@
 import {
   type DebugBreakInput,
+  type DiagnoseInput,
   type GitActionProgressEvent,
   type GitRunStackedActionInput,
   type GitRunStackedActionResult,
@@ -7,10 +8,13 @@ import {
   type GitStatusStreamEvent,
   type LocalApi,
   ORCHESTRATION_WS_METHODS,
+  type ReconcileInput,
+  type ReconcileOutcome,
   type RecoverInput,
   type RecoveryOutcome,
   type RecoveryProgressEvent,
   type ServerSettingsPatch,
+  type SessionDiagnosticReport,
   THREAD_RECOVERY_WS_METHODS,
   WS_METHODS,
 } from "@t3tools/contracts";
@@ -151,6 +155,23 @@ export interface WsRpcClient {
      * the `/debug-break-thread` slash command.
      */
     readonly debugBreak: (input: DebugBreakInput) => Promise<void>;
+
+    /**
+     * Read-only divergence report for a thread. Joins
+     * `projection_thread_sessions`, `projection_turns`, and
+     * `provider_session_runtime` so the UI can explain why a thread
+     * appears stuck without applying any fix. Wired to the
+     * `/diagnose-thread [<uuid>]` slash command.
+     */
+    readonly diagnose: (input: DiagnoseInput) => Promise<SessionDiagnosticReport>;
+
+    /**
+     * Run Phase-1 reconciliation on a single thread: if it is stuck,
+     * dispatch a synthetic `thread.session.set` event that clears the
+     * divergence; otherwise no-op. Wired to the
+     * `/reconcile-thread [<uuid>]` slash command.
+     */
+    readonly reconcile: (input: ReconcileInput) => Promise<ReconcileOutcome>;
   };
 }
 
@@ -307,6 +328,10 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
       },
       debugBreak: (input) =>
         transport.request((client) => client[THREAD_RECOVERY_WS_METHODS.debugBreak](input)),
+      diagnose: (input) =>
+        transport.request((client) => client[THREAD_RECOVERY_WS_METHODS.diagnose](input)),
+      reconcile: (input) =>
+        transport.request((client) => client[THREAD_RECOVERY_WS_METHODS.reconcile](input)),
     },
   };
 }

@@ -10,17 +10,27 @@ export type ComposerTriggerKind = "path" | "slash-command" | "slash-model" | "sk
  * - `plan` / `default`   — mode toggles; dispatch side-effects via
  *                          `handleInteractionModeChange`.
  * - `recover-thread`     — opens the RecoveryProgressOverlay to drive the
- *                          server-side 5-step recovery waterfall.
+ *                          server-side 5-step recovery waterfall. Accepts
+ *                          an optional `<uuid>` arg to operate on a
+ *                          different thread than the active one.
  * - `debug-break-thread` — clears `session_key` + `file_reference` on the
  *                          server so the next turn exercises the recovery
  *                          waterfall end-to-end (testing aid).
+ * - `diagnose-thread`    — read-only divergence report for a thread.
+ *                          Accepts an optional `<uuid>` arg so the user
+ *                          can diagnose a broken thread from a healthy
+ *                          one.
+ * - `reconcile-thread`   — runs Phase-1 reconciliation on demand.
+ *                          Accepts an optional `<uuid>` arg.
  */
 export type ComposerSlashCommand =
   | "model"
   | "plan"
   | "default"
   | "recover-thread"
-  | "debug-break-thread";
+  | "debug-break-thread"
+  | "diagnose-thread"
+  | "reconcile-thread";
 
 export interface ComposerTrigger {
   kind: ComposerTriggerKind;
@@ -294,32 +304,88 @@ export function detectComposerTrigger(text: string, cursorInput: number): Compos
 /**
  * The subset of `ComposerSlashCommand` that can be invoked as a
  * standalone message (type the whole command, press Enter, no
- * arguments). `model` is excluded because it takes a following
- * argument and is handled via the autocomplete / inline-replacement
- * path instead.
+ * arguments beyond optional thread uuids). `model` is excluded because
+ * it takes a following argument and is handled via the autocomplete /
+ * inline-replacement path instead.
  */
 export type StandaloneComposerSlashCommand = Exclude<ComposerSlashCommand, "model">;
 
+/**
+ * Parsed representation of a standalone slash command. For the
+ * thread-operation commands (`recover-thread`, `diagnose-thread`,
+ * `reconcile-thread`) the user may append a uuid: `/diagnose-thread
+ * 450c6cc7-…` — the parser strips it into the optional `threadId`
+ * field. For mode toggles (`plan` / `default`) and the dev-aid
+ * `debug-break-thread` no arg is accepted; any trailing text makes the
+ * parser return null.
+ */
+export interface ParsedStandaloneComposerSlashCommand {
+  readonly command: StandaloneComposerSlashCommand;
+  readonly threadId: string | null;
+}
+
+/**
+ * Slash commands that accept an optional uuid argument. Keeping this
+ * list tight (rather than accepting any trailing token for every
+ * command) stops us from silently eating typos.
+ */
+const COMMANDS_ACCEPTING_THREAD_ID = new Set<StandaloneComposerSlashCommand>([
+  "recover-thread",
+  "diagnose-thread",
+  "reconcile-thread",
+]);
+
+// RFC-4122-ish uuid shape (loose: accepts any 8-4-4-4-12 hex string).
+// The server validates strictly via `ThreadId` so this client-side check
+// is only a usability guard, not a security boundary.
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export function parseStandaloneComposerSlashCommand(
   text: string,
-): StandaloneComposerSlashCommand | null {
-  const match = /^\/(plan|default|recover-thread|debug-break-thread)\s*$/i.exec(text.trim());
+): ParsedStandaloneComposerSlashCommand | null {
+  const trimmed = text.trim();
+  // Split command name from the remainder of the line. Whitespace
+  // between command and arg is required (the command name itself must
+  // not contain whitespace). The regex tolerates multiple spaces.
+  const match = /^\/([a-z][a-z0-9-]*)(?:\s+(.*))?$/i.exec(trimmed);
   if (!match) {
     return null;
   }
-  const command = match[1]?.toLowerCase();
-  switch (command) {
+  const name = (match[1] ?? "").toLowerCase();
+  const rest = (match[2] ?? "").trim();
+
+  let command: StandaloneComposerSlashCommand;
+  switch (name) {
     case "plan":
-      return "plan";
     case "default":
-      return "default";
-    case "recover-thread":
-      return "recover-thread";
     case "debug-break-thread":
-      return "debug-break-thread";
+    case "recover-thread":
+    case "diagnose-thread":
+    case "reconcile-thread":
+      command = name;
+      break;
     default:
       return null;
   }
+
+  if (rest.length === 0) {
+    return { command, threadId: null };
+  }
+
+  if (!COMMANDS_ACCEPTING_THREAD_ID.has(command)) {
+    // Commands that don't take args get rejected if anything trails
+    // the name so typos like "/plan now" don't silently fire /plan.
+    return null;
+  }
+
+  if (!UUID_PATTERN.test(rest)) {
+    // The command accepts a uuid but what's there isn't a uuid.
+    // Returning null lets the caller surface the input as a normal
+    // message (the server can then complain, or the user can notice).
+    return null;
+  }
+
+  return { command, threadId: rest.toLowerCase() };
 }
 
 export function replaceTextRange(
