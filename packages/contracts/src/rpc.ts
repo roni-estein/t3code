@@ -68,6 +68,7 @@ import {
   TerminalWriteInput,
 } from "./terminal.ts";
 import {
+  DebugBreakInput,
   RecoverInput,
   RecoveryProgressEvent,
   THREAD_RECOVERY_WS_METHODS,
@@ -360,6 +361,24 @@ export const WsThreadRecoveryRecoverRpc = Rpc.make(THREAD_RECOVERY_WS_METHODS.re
   stream: true,
 });
 
+/**
+ * Thread recovery debug-break - deliberately break a thread's saved
+ * session so the next activation exercises the recovery waterfall.
+ *
+ * Clears `session_key` + `file_reference` on `project_history` for the
+ * given thread. The Claude CLI's `--resume <id>` will fail, and the
+ * recovery service will take over. Intended for the `/debug-break-thread`
+ * slash command and integration testing.
+ *
+ * Resolves with `void` on success; errors bubble as
+ * `ThreadRecoveryRpcError` (persistence failure, etc.).
+ */
+export const WsThreadRecoveryDebugBreakRpc = Rpc.make(THREAD_RECOVERY_WS_METHODS.debugBreak, {
+  payload: DebugBreakInput,
+  success: Schema.Void,
+  error: ThreadRecoveryRpcError,
+});
+
 export const WsSubscribeTerminalEventsRpc = Rpc.make(WS_METHODS.subscribeTerminalEvents, {
   payload: Schema.Struct({}),
   success: TerminalEvent,
@@ -425,4 +444,5 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationSubscribeShellRpc,
   WsOrchestrationSubscribeThreadRpc,
   WsThreadRecoveryRecoverRpc,
+  WsThreadRecoveryDebugBreakRpc,
 );

@@ -443,6 +443,17 @@ export interface ChatComposerProps {
   handleInteractionModeChange: (mode: ProviderInteractionMode) => void;
   togglePlanSidebar: () => void;
 
+  /**
+   * Invoked when the user selects `/recover-thread` from the slash-command
+   * menu. The parent owns the RecoveryProgressOverlay dialog state.
+   */
+  handleTriggerThreadRecovery: () => void;
+  /**
+   * Invoked when the user selects `/debug-break-thread`. Parent calls the
+   * `threadRecovery.debugBreak` RPC + surfaces a confirmation toast.
+   */
+  handleDebugBreakThread: () => void;
+
   focusComposer: () => void;
   scheduleComposerFocus: () => void;
   setThreadError: (threadId: ThreadId | null, error: string | null) => void;
@@ -512,6 +523,8 @@ export const ChatComposer = memo(
       toggleInteractionMode,
       handleRuntimeModeChange,
       handleInteractionModeChange,
+      handleTriggerThreadRecovery,
+      handleDebugBreakThread,
       togglePlanSidebar,
       focusComposer,
       scheduleComposerFocus,
@@ -741,6 +754,20 @@ export const ChatComposer = memo(
             command: "default",
             label: "/default",
             description: "Switch this thread back to normal build mode",
+          },
+          {
+            id: "slash:recover-thread",
+            type: "slash-command",
+            command: "recover-thread",
+            label: "/recover-thread",
+            description: "Run the 5-step Claude session recovery waterfall",
+          },
+          {
+            id: "slash:debug-break-thread",
+            type: "slash-command",
+            command: "debug-break-thread",
+            label: "/debug-break-thread",
+            description: "Dev: clear saved session so the next turn exercises recovery",
           },
         ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>;
         const providerSlashCommandItems = (selectedProviderStatus?.slashCommands ?? []).map(
@@ -1388,7 +1415,26 @@ export const ChatComposer = memo(
             }
             return;
           }
-          void handleInteractionModeChange(item.command === "plan" ? "plan" : "default");
+          // All other slash commands are "side-effect" style: clear the
+          // trigger text from the prompt and dispatch the corresponding
+          // handler. Grouped into a switch so new commands only touch
+          // this block.
+          switch (item.command) {
+            case "plan":
+            case "default":
+              handleInteractionModeChange(item.command);
+              break;
+            case "recover-thread":
+              handleTriggerThreadRecovery();
+              break;
+            case "debug-break-thread":
+              handleDebugBreakThread();
+              break;
+            default: {
+              const _exhaustive: never = item.command;
+              return _exhaustive;
+            }
+          }
           const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
             expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
           });
@@ -1444,6 +1490,8 @@ export const ChatComposer = memo(
       [
         applyPromptReplacement,
         handleInteractionModeChange,
+        handleTriggerThreadRecovery,
+        handleDebugBreakThread,
         onProviderModelSelect,
         resolveActiveComposerTrigger,
       ],

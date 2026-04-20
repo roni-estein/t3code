@@ -1066,6 +1066,21 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             ),
             { "rpc.aggregate": "threadRecovery" },
           ),
+        [THREAD_RECOVERY_WS_METHODS.debugBreak]: (input) =>
+          observeRpcEffect(
+            THREAD_RECOVERY_WS_METHODS.debugBreak,
+            threadRecovery.debugBreak(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ThreadRecoveryRpcError({
+                    message: cause.message ?? "Failed to break thread recovery state",
+                    attemptedSteps: [],
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "threadRecovery" },
+          ),
         [WS_METHODS.subscribeAuthAccess]: (_input) =>
           observeRpcStreamEffect(
             WS_METHODS.subscribeAuthAccess,

@@ -51,7 +51,12 @@ import type {
   OrchestrationSubscribeThreadInput,
   OrchestrationThreadStreamItem,
 } from "./orchestration.ts";
-import type { RecoverInput, RecoveryOutcome, RecoveryProgressEvent } from "./threadRecovery.ts";
+import type {
+  DebugBreakInput,
+  RecoverInput,
+  RecoveryOutcome,
+  RecoveryProgressEvent,
+} from "./threadRecovery.ts";
 import type { EnvironmentId } from "./baseSchemas.ts";
 import { EditorId } from "./editor.ts";
 import { ServerSettings, type ClientSettings, type ServerSettingsPatch } from "./settings.ts";
@@ -306,5 +311,12 @@ export interface EnvironmentApi {
         onProgress?: (event: RecoveryProgressEvent) => void;
       },
     ) => Promise<RecoveryOutcome>;
+    /**
+     * Debug aid — clear `session_key` + `file_reference` on the
+     * `project_history` row for this thread so the next activation
+     * exercises the recovery waterfall. Backs the `/debug-break-thread`
+     * slash command.
+     */
+    debugBreak: (input: DebugBreakInput) => Promise<void>;
   };
 }

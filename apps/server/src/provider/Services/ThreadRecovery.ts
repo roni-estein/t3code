@@ -49,6 +49,7 @@
  * @module ThreadRecoveryService
  */
 import {
+  type DebugBreakInput,
   type RecoverInput,
   type RecoveryOutcome,
   type RecoveryProgressEvent,
@@ -66,7 +67,7 @@ import type {
 // Re-export wire types so server-internal consumers don't need to reach
 // across to @t3tools/contracts for them. Keeps the service's public
 // surface self-contained.
-export type { RecoverInput, RecoveryOutcome, RecoveryProgressEvent, RecoveryStep };
+export type { DebugBreakInput, RecoverInput, RecoveryOutcome, RecoveryProgressEvent, RecoveryStep };
 
 /**
  * Errors that the service itself can raise. `ThreadRecoveryError` is the
@@ -114,6 +115,17 @@ export interface ThreadRecoveryShape {
    * `recoverStream` instead.
    */
   readonly streamEvents: Stream.Stream<RecoveryProgressEvent>;
+
+  /**
+   * Debug aid: clear `session_key` + `file_reference` on the
+   * `project_history` row for the given thread so the next activation
+   * will exercise the recovery waterfall end-to-end.
+   *
+   * Invoked by the `/debug-break-thread` slash command. Intentionally
+   * no-ops if the row doesn't exist — the thread hasn't been persisted
+   * yet, so there's nothing to break.
+   */
+  readonly debugBreak: (input: DebugBreakInput) => Effect.Effect<void, ThreadRecoveryServiceError>;
 }
 
 export class ThreadRecoveryService extends Context.Service<

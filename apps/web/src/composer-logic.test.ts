@@ -445,7 +445,29 @@ describe("parseStandaloneComposerSlashCommand", () => {
     expect(parseStandaloneComposerSlashCommand("/default")).toBe("default");
   });
 
+  it("parses standalone /recover-thread command", () => {
+    expect(parseStandaloneComposerSlashCommand("/recover-thread")).toBe("recover-thread");
+  });
+
+  it("parses standalone /recover-thread with surrounding whitespace", () => {
+    expect(parseStandaloneComposerSlashCommand("  /recover-thread  ")).toBe("recover-thread");
+  });
+
+  it("parses standalone /debug-break-thread command", () => {
+    expect(parseStandaloneComposerSlashCommand("/debug-break-thread")).toBe("debug-break-thread");
+  });
+
+  it("is case-insensitive", () => {
+    expect(parseStandaloneComposerSlashCommand("/RECOVER-THREAD")).toBe("recover-thread");
+  });
+
   it("ignores slash commands with extra message text", () => {
     expect(parseStandaloneComposerSlashCommand("/plan explain this")).toBeNull();
+    expect(parseStandaloneComposerSlashCommand("/recover-thread now")).toBeNull();
+  });
+
+  it("ignores unknown slash commands", () => {
+    expect(parseStandaloneComposerSlashCommand("/unknown")).toBeNull();
+    expect(parseStandaloneComposerSlashCommand("/model")).toBeNull();
   });
 });

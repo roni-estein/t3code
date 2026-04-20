@@ -518,6 +518,7 @@ const buildAppUnderTest = (options?: {
             }),
           recoverStream: () => Stream.empty,
           streamEvents: Stream.empty,
+          debugBreak: () => Effect.void,
           ...options?.layers?.threadRecovery,
         }),
       ),

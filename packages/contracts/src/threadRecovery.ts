@@ -152,6 +152,22 @@ export class ThreadRecoveryRpcError extends Schema.TaggedErrorClass<ThreadRecove
 ) {}
 
 /**
+ * DebugBreakInput - Payload for `threadRecovery.debugBreak`.
+ *
+ * Clears `session_key` + `file_reference` on `project_history` for the
+ * given thread so that the next turn's session-resume attempt will
+ * exercise the recovery waterfall end-to-end (scan-current-cwd or
+ * db-replay, depending on what's on disk).
+ *
+ * Intended as a development / QA aid — invoked from the
+ * `/debug-break-thread` slash command.
+ */
+export const DebugBreakInput = Schema.Struct({
+  threadId: ThreadId,
+});
+export type DebugBreakInput = typeof DebugBreakInput.Type;
+
+/**
  * WS method identifiers for the thread-recovery RPC family.
  * Namespaced under `threadRecovery.` to keep WS method names grouped
  * by aggregate (matches the existing `git.*`, `terminal.*`, etc.
@@ -159,4 +175,5 @@ export class ThreadRecoveryRpcError extends Schema.TaggedErrorClass<ThreadRecove
  */
 export const THREAD_RECOVERY_WS_METHODS = {
   recover: "threadRecovery.recover",
+  debugBreak: "threadRecovery.debugBreak",
 } as const;

@@ -142,8 +142,11 @@ import { ChatHeader } from "./chat/ChatHeader";
 import { type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { NoActiveThreadState } from "./NoActiveThreadState";
 import { resolveEffectiveEnvMode, resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
+import { ContextWindowWarningBanner } from "./chat/ContextWindowWarningBanner";
 import { ProviderStatusBanner } from "./chat/ProviderStatusBanner";
+import { RecoveryProgressOverlay } from "./RecoveryProgressOverlay";
 import { ThreadErrorBanner } from "./chat/ThreadErrorBanner";
+import { deriveLatestContextWindowSnapshot } from "~/lib/contextWindow";
 import {
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
   buildExpiredTerminalContextToastCopy,
@@ -1161,6 +1164,10 @@ export default function ChatView(props: ChatViewProps) {
     () => deriveActivePlanState(threadActivities, activeLatestTurn?.turnId ?? undefined),
     [activeLatestTurn?.turnId, threadActivities],
   );
+  const activeContextWindow = useMemo(
+    () => deriveLatestContextWindowSnapshot(threadActivities),
+    [threadActivities],
+  );
   const planSidebarLabel = sidebarProposedPlan || interactionMode === "plan" ? "Plan" : "Tasks";
   const showPlanFollowUpPrompt =
     pendingUserInputs.length === 0 &&
@@ -1943,6 +1950,62 @@ export default function ChatView(props: ChatViewProps) {
   const toggleInteractionMode = useCallback(() => {
     handleInteractionModeChange(interactionMode === "plan" ? "default" : "plan");
   }, [handleInteractionModeChange, interactionMode]);
+
+  // ---------------------------------------------------------------
+  // /recover-thread and /debug-break-thread wiring
+  //
+  // Both slash commands live here (not ChatComposer) because they
+  // need `activeThread.id`, `environmentId`, and the current cwd —
+  // all thread-level state — plus they render a modal overlay that
+  // outlives the composer.
+  // ---------------------------------------------------------------
+  const [recoveryOverlayOpen, setRecoveryOverlayOpen] = useState(false);
+  const handleTriggerThreadRecovery = useCallback(() => {
+    if (!activeThread) {
+      toastManager.add({
+        type: "warning",
+        title: "Cannot recover",
+        description: "Open a thread before running /recover-thread.",
+      });
+      return;
+    }
+    setRecoveryOverlayOpen(true);
+  }, [activeThread]);
+  const handleDebugBreakThread = useCallback(() => {
+    if (!activeThread || !environmentId) {
+      toastManager.add({
+        type: "warning",
+        title: "Cannot break thread",
+        description: "Open a thread before running /debug-break-thread.",
+      });
+      return;
+    }
+    const api = readEnvironmentApi(environmentId);
+    if (!api) {
+      toastManager.add({
+        type: "error",
+        title: "Environment not connected",
+        description: "Pair the environment before running /debug-break-thread.",
+      });
+      return;
+    }
+    void api.threadRecovery
+      .debugBreak({ threadId: activeThread.id })
+      .then(() => {
+        toastManager.add({
+          type: "info",
+          title: "Broke thread recovery state",
+          description: "Saved session cleared — the next turn will run the recovery waterfall.",
+        });
+      })
+      .catch((error: unknown) => {
+        toastManager.add({
+          type: "error",
+          title: "Failed to break thread",
+          description: error instanceof Error ? error.message : String(error),
+        });
+      });
+  }, [activeThread, environmentId]);
   const togglePlanSidebar = useCallback(() => {
     setPlanSidebarOpen((open) => {
       if (open) {
@@ -2444,7 +2507,22 @@ export default function ChatView(props: ChatViewProps) {
         ? parseStandaloneComposerSlashCommand(trimmed)
         : null;
     if (standaloneSlashCommand) {
-      handleInteractionModeChange(standaloneSlashCommand);
+      switch (standaloneSlashCommand) {
+        case "plan":
+        case "default":
+          handleInteractionModeChange(standaloneSlashCommand);
+          break;
+        case "recover-thread":
+          handleTriggerThreadRecovery();
+          break;
+        case "debug-break-thread":
+          handleDebugBreakThread();
+          break;
+        default: {
+          const _exhaustive: never = standaloneSlashCommand;
+          return _exhaustive;
+        }
+      }
       promptRef.current = "";
       clearComposerDraftContent(composerDraftTarget);
       composerRef.current?.resetCursorState();
@@ -3333,6 +3411,7 @@ export default function ChatView(props: ChatViewProps) {
 
       {/* Error banner */}
       <ProviderStatusBanner status={activeProviderStatus} />
+      <ContextWindowWarningBanner usage={activeContextWindow} />
       <ThreadErrorBanner
         error={activeThread.error}
         onDismiss={() => setThreadError(activeThread.id, null)}
@@ -3447,6 +3526,8 @@ export default function ChatView(props: ChatViewProps) {
               toggleInteractionMode={toggleInteractionMode}
               handleRuntimeModeChange={handleRuntimeModeChange}
               handleInteractionModeChange={handleInteractionModeChange}
+              handleTriggerThreadRecovery={handleTriggerThreadRecovery}
+              handleDebugBreakThread={handleDebugBreakThread}
               togglePlanSidebar={togglePlanSidebar}
               focusComposer={focusComposer}
               scheduleComposerFocus={scheduleComposerFocus}
@@ -3552,6 +3633,23 @@ export default function ChatView(props: ChatViewProps) {
       {expandedImage && (
         <ExpandedImageDialog preview={expandedImage} onClose={closeExpandedImage} />
       )}
+
+      {/*
+       * Recovery waterfall overlay. Opens when the user runs
+       * `/recover-thread`. Takes its identity from the current active
+       * thread; unmounts when the user closes it or switches threads
+       * (changing `activeThread?.id` forces a remount).
+       */}
+      {activeThread && activeProjectCwd ? (
+        <RecoveryProgressOverlay
+          key={activeThread.id}
+          open={recoveryOverlayOpen}
+          environmentId={environmentId}
+          threadId={activeThread.id}
+          cwd={activeProjectCwd}
+          onOpenChange={setRecoveryOverlayOpen}
+        />
+      ) : null}
     </div>
   );
 }

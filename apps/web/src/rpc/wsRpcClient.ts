@@ -1,4 +1,5 @@
 import {
+  type DebugBreakInput,
   type GitActionProgressEvent,
   type GitRunStackedActionInput,
   type GitRunStackedActionResult,
@@ -142,6 +143,14 @@ export interface WsRpcClient {
       input: RecoverInput,
       options?: ThreadRecoveryRecoverOptions,
     ) => Promise<RecoveryOutcome>;
+
+    /**
+     * Debug aid — clears `session_key` + `file_reference` on the
+     * `project_history` row for this thread so the next activation
+     * will exercise the recovery waterfall end-to-end. Wired up to
+     * the `/debug-break-thread` slash command.
+     */
+    readonly debugBreak: (input: DebugBreakInput) => Promise<void>;
   };
 }
 
@@ -296,6 +305,8 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
 
         throw new Error("Thread recovery stream completed without emitting a terminal outcome.");
       },
+      debugBreak: (input) =>
+        transport.request((client) => client[THREAD_RECOVERY_WS_METHODS.debugBreak](input)),
     },
   };
 }

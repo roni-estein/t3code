@@ -529,9 +529,34 @@ const makeThreadRecovery = (options?: ThreadRecoveryLiveOptions) =>
         }),
       );
 
+    /**
+     * debugBreak - Clear session_key + file_reference in one atomic
+     * pair of updates. The order matters only loosely (both target the
+     * same row via updated_at) but we do file_reference last so an
+     * observer that races the updates never sees "file_reference
+     * present but session_key cleared" which could confuse step 2 of
+     * the waterfall into thinking the cache is fresh.
+     *
+     * No-op if the row doesn't exist yet — intentional, matches the
+     * repo-level no-op semantics.
+     */
+    const debugBreak: ThreadRecoveryShape["debugBreak"] = (input) =>
+      Effect.gen(function* () {
+        const now = IsoDateTime.make(new Date().toISOString());
+        yield* projectHistoryRepository
+          .updateSessionKey({ threadId: input.threadId, sessionKey: null, updatedAt: now })
+          .pipe(Effect.mapError(toPersistenceError("ThreadRecoveryService.debugBreak.sessionKey")));
+        yield* projectHistoryRepository
+          .updateFileReference({ threadId: input.threadId, fileReference: null, updatedAt: now })
+          .pipe(
+            Effect.mapError(toPersistenceError("ThreadRecoveryService.debugBreak.fileReference")),
+          );
+      });
+
     return {
       recover,
       recoverStream,
+      debugBreak,
       get streamEvents() {
         return Stream.fromPubSub(pubsub);
       },

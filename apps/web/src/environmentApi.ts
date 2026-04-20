@@ -47,6 +47,7 @@ export function createEnvironmentApi(rpcClient: WsRpcClient): EnvironmentApi {
     },
     threadRecovery: {
       recover: (input, options) => rpcClient.threadRecovery.recover(input, options),
+      debugBreak: (input) => rpcClient.threadRecovery.debugBreak(input),
     },
   };
 }

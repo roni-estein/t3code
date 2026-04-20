@@ -2,7 +2,25 @@ import { splitPromptIntoComposerSegments } from "./composer-editor-mentions";
 import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "./lib/terminalContext";
 
 export type ComposerTriggerKind = "path" | "slash-command" | "slash-model" | "skill";
-export type ComposerSlashCommand = "model" | "plan" | "default";
+/**
+ * The union of all slash commands the built-in composer menu handles.
+ *
+ * - `model`              — opens the model picker inline; handled via the
+ *                          replacement path (`/model ` → user picks).
+ * - `plan` / `default`   — mode toggles; dispatch side-effects via
+ *                          `handleInteractionModeChange`.
+ * - `recover-thread`     — opens the RecoveryProgressOverlay to drive the
+ *                          server-side 5-step recovery waterfall.
+ * - `debug-break-thread` — clears `session_key` + `file_reference` on the
+ *                          server so the next turn exercises the recovery
+ *                          waterfall end-to-end (testing aid).
+ */
+export type ComposerSlashCommand =
+  | "model"
+  | "plan"
+  | "default"
+  | "recover-thread"
+  | "debug-break-thread";
 
 export interface ComposerTrigger {
   kind: ComposerTriggerKind;
@@ -273,16 +291,35 @@ export function detectComposerTrigger(text: string, cursorInput: number): Compos
   };
 }
 
+/**
+ * The subset of `ComposerSlashCommand` that can be invoked as a
+ * standalone message (type the whole command, press Enter, no
+ * arguments). `model` is excluded because it takes a following
+ * argument and is handled via the autocomplete / inline-replacement
+ * path instead.
+ */
+export type StandaloneComposerSlashCommand = Exclude<ComposerSlashCommand, "model">;
+
 export function parseStandaloneComposerSlashCommand(
   text: string,
-): Exclude<ComposerSlashCommand, "model"> | null {
-  const match = /^\/(plan|default)\s*$/i.exec(text.trim());
+): StandaloneComposerSlashCommand | null {
+  const match = /^\/(plan|default|recover-thread|debug-break-thread)\s*$/i.exec(text.trim());
   if (!match) {
     return null;
   }
   const command = match[1]?.toLowerCase();
-  if (command === "plan") return "plan";
-  return "default";
+  switch (command) {
+    case "plan":
+      return "plan";
+    case "default":
+      return "default";
+    case "recover-thread":
+      return "recover-thread";
+    case "debug-break-thread":
+      return "debug-break-thread";
+    default:
+      return null;
+  }
 }
 
 export function replaceTextRange(
