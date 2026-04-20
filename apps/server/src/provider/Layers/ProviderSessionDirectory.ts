@@ -1,6 +1,7 @@
-import { type ProviderKind, type ThreadId } from "@t3tools/contracts";
+import { IsoDateTime, type ProviderKind, type ThreadId } from "@t3tools/contracts";
 import { Effect, Layer, Option } from "effect";
 
+import { ProjectionProjectHistoryRepository } from "../../persistence/Services/ProjectionProjectHistory.ts";
 import type { ProviderSessionRuntime } from "../../persistence/Services/ProviderSessionRuntime.ts";
 import { ProviderSessionRuntimeRepository } from "../../persistence/Services/ProviderSessionRuntime.ts";
 import { ProviderSessionDirectoryPersistenceError, ProviderValidationError } from "../Errors.ts";
@@ -52,6 +53,26 @@ function mergeRuntimePayload(
   return next;
 }
 
+/**
+ * Extract the Claude CLI session key from a persisted `resumeCursor`.
+ *
+ * The Claude adapter shapes the resume cursor as
+ * `{ threadId?, resume?, resumeSessionAt?, turnCount? }` and `resume` is
+ * the value you'd pass to `claude --resume <key>`. Codex threads store
+ * a different shape (`{ threadId }` or `{ opaque }`) with no `resume`
+ * field — in that case this returns null, which causes the
+ * project_history.session_key to be cleared (correct: if the thread
+ * has switched off Claude, the stale Claude session key is no longer
+ * the authoritative value).
+ */
+function readResumeKey(resumeCursor: unknown | null): string | null {
+  if (!isRecord(resumeCursor)) {
+    return null;
+  }
+  const resume = resumeCursor.resume;
+  return typeof resume === "string" && resume.length > 0 ? resume : null;
+}
+
 function toRuntimeBinding(
   runtime: ProviderSessionRuntime,
   operation: string,
@@ -75,6 +96,7 @@ function toRuntimeBinding(
 
 const makeProviderSessionDirectory = Effect.gen(function* () {
   const repository = yield* ProviderSessionRuntimeRepository;
+  const projectHistoryRepository = yield* ProjectionProjectHistoryRepository;
 
   const getBinding = (threadId: ThreadId) =>
     repository.getByThreadId({ threadId }).pipe(
@@ -107,6 +129,10 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
     const now = new Date().toISOString();
     const providerChanged =
       existingRuntime !== undefined && existingRuntime.providerName !== binding.provider;
+    const resolvedResumeCursor =
+      binding.resumeCursor !== undefined
+        ? binding.resumeCursor
+        : (existingRuntime?.resumeCursor ?? null);
     yield* repository
       .upsert({
         threadId: resolvedThreadId,
@@ -117,16 +143,31 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
         runtimeMode: binding.runtimeMode ?? existingRuntime?.runtimeMode ?? "full-access",
         status: binding.status ?? existingRuntime?.status ?? "running",
         lastSeenAt: now,
-        resumeCursor:
-          binding.resumeCursor !== undefined
-            ? binding.resumeCursor
-            : (existingRuntime?.resumeCursor ?? null),
+        resumeCursor: resolvedResumeCursor,
         runtimePayload: mergeRuntimePayload(
           existingRuntime?.runtimePayload ?? null,
           binding.runtimePayload,
         ),
       })
       .pipe(Effect.mapError(toPersistenceError("ProviderSessionDirectory.upsert:upsert")));
+
+    // Mirror the Claude CLI session key into the project_history recovery
+    // index so the ThreadRecoveryService can look it up without joining
+    // against provider_session_runtime. See migration 027 for full
+    // rationale. This is an UPDATE-only call — if the thread.created
+    // event has not yet been projected, it no-ops; the next imperative
+    // upsert (every turn writes one) will populate the row.
+    yield* projectHistoryRepository
+      .updateSessionKey({
+        threadId: resolvedThreadId,
+        sessionKey: readResumeKey(resolvedResumeCursor),
+        updatedAt: IsoDateTime.make(now),
+      })
+      .pipe(
+        Effect.mapError(
+          toPersistenceError("ProviderSessionDirectory.upsert:projectHistorySessionKeySync"),
+        ),
+      );
   });
 
   const getProvider: ProviderSessionDirectoryShape["getProvider"] = (threadId) =>

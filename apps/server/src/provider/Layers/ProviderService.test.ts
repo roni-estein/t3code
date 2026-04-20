@@ -35,6 +35,7 @@ import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.t
 import { makeProviderServiceLive } from "./ProviderService.ts";
 import { ProviderSessionDirectoryLive } from "./ProviderSessionDirectory.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { ProjectionProjectHistoryRepositoryLive } from "../../persistence/Layers/ProjectionProjectHistory.ts";
 import { ProviderSessionRuntimeRepositoryLive } from "../../persistence/Layers/ProviderSessionRuntime.ts";
 import { ProviderSessionRuntimeRepository } from "../../persistence/Services/ProviderSessionRuntime.ts";
 import {
@@ -259,7 +260,13 @@ function makeProviderServiceLayer() {
   const runtimeRepositoryLayer = ProviderSessionRuntimeRepositoryLive.pipe(
     Layer.provide(SqlitePersistenceMemory),
   );
-  const directoryLayer = ProviderSessionDirectoryLive.pipe(Layer.provide(runtimeRepositoryLayer));
+  const projectHistoryRepositoryLayer = ProjectionProjectHistoryRepositoryLive.pipe(
+    Layer.provide(SqlitePersistenceMemory),
+  );
+  const directoryLayer = ProviderSessionDirectoryLive.pipe(
+    Layer.provide(runtimeRepositoryLayer),
+    Layer.provide(projectHistoryRepositoryLayer),
+  );
 
   const layer = it.layer(
     Layer.mergeAll(
@@ -307,7 +314,13 @@ it.effect("ProviderServiceLive rejects new sessions for disabled providers", () 
     const runtimeRepositoryLayer = ProviderSessionRuntimeRepositoryLive.pipe(
       Layer.provide(SqlitePersistenceMemory),
     );
-    const directoryLayer = ProviderSessionDirectoryLive.pipe(Layer.provide(runtimeRepositoryLayer));
+    const projectHistoryRepositoryLayer = ProjectionProjectHistoryRepositoryLive.pipe(
+      Layer.provide(SqlitePersistenceMemory),
+    );
+    const directoryLayer = ProviderSessionDirectoryLive.pipe(
+      Layer.provide(runtimeRepositoryLayer),
+      Layer.provide(projectHistoryRepositoryLayer),
+    );
     const providerLayer = makeProviderServiceLive().pipe(
       Layer.provide(providerAdapterLayer),
       Layer.provide(directoryLayer),
@@ -351,7 +364,13 @@ it.effect("ProviderServiceLive keeps persisted resumable sessions on startup", (
     const runtimeRepositoryLayer = ProviderSessionRuntimeRepositoryLive.pipe(
       Layer.provide(persistenceLayer),
     );
-    const directoryLayer = ProviderSessionDirectoryLive.pipe(Layer.provide(runtimeRepositoryLayer));
+    const projectHistoryRepositoryLayer = ProjectionProjectHistoryRepositoryLive.pipe(
+      Layer.provide(persistenceLayer),
+    );
+    const directoryLayer = ProviderSessionDirectoryLive.pipe(
+      Layer.provide(runtimeRepositoryLayer),
+      Layer.provide(projectHistoryRepositoryLayer),
+    );
 
     yield* Effect.gen(function* () {
       const directory = yield* ProviderSessionDirectory;
@@ -408,6 +427,9 @@ it.effect(
       const runtimeRepositoryLayer = ProviderSessionRuntimeRepositoryLive.pipe(
         Layer.provide(persistenceLayer),
       );
+      const projectHistoryRepositoryLayer = ProjectionProjectHistoryRepositoryLive.pipe(
+        Layer.provide(persistenceLayer),
+      );
 
       const firstCodex = makeFakeCodexAdapter();
       const firstRegistry: typeof ProviderAdapterRegistry.Service = {
@@ -420,6 +442,7 @@ it.effect(
 
       const firstDirectoryLayer = ProviderSessionDirectoryLive.pipe(
         Layer.provide(runtimeRepositoryLayer),
+        Layer.provide(projectHistoryRepositoryLayer),
       );
       const firstProviderLayer = makeProviderServiceLive().pipe(
         Layer.provide(Layer.succeed(ProviderAdapterRegistry, firstRegistry)),
@@ -472,6 +495,7 @@ it.effect(
       };
       const secondDirectoryLayer = ProviderSessionDirectoryLive.pipe(
         Layer.provide(runtimeRepositoryLayer),
+        Layer.provide(projectHistoryRepositoryLayer),
       );
       const secondProviderLayer = makeProviderServiceLive().pipe(
         Layer.provide(Layer.succeed(ProviderAdapterRegistry, secondRegistry)),
@@ -921,6 +945,9 @@ routing.layer("ProviderServiceLive routing", (it) => {
       const runtimeRepositoryLayer = ProviderSessionRuntimeRepositoryLive.pipe(
         Layer.provide(persistenceLayer),
       );
+      const projectHistoryRepositoryLayer = ProjectionProjectHistoryRepositoryLive.pipe(
+        Layer.provide(persistenceLayer),
+      );
 
       const firstClaude = makeFakeCodexAdapter("claudeAgent");
       const firstRegistry: typeof ProviderAdapterRegistry.Service = {
@@ -932,6 +959,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
       };
       const firstDirectoryLayer = ProviderSessionDirectoryLive.pipe(
         Layer.provide(runtimeRepositoryLayer),
+        Layer.provide(projectHistoryRepositoryLayer),
       );
       const firstProviderLayer = makeProviderServiceLive().pipe(
         Layer.provide(Layer.succeed(ProviderAdapterRegistry, firstRegistry)),
@@ -965,6 +993,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
       };
       const secondDirectoryLayer = ProviderSessionDirectoryLive.pipe(
         Layer.provide(runtimeRepositoryLayer),
+        Layer.provide(projectHistoryRepositoryLayer),
       );
       const secondProviderLayer = makeProviderServiceLive().pipe(
         Layer.provide(Layer.succeed(ProviderAdapterRegistry, secondRegistry)),

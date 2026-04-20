@@ -16,6 +16,7 @@ import {
 import { ServerSettingsService } from "../src/serverSettings.ts";
 import { AnalyticsService } from "../src/telemetry/Services/AnalyticsService.ts";
 import { SqlitePersistenceMemory } from "../src/persistence/Layers/Sqlite.ts";
+import { ProjectionProjectHistoryRepositoryLive } from "../src/persistence/Layers/ProjectionProjectHistory.ts";
 import { ProviderSessionRuntimeRepositoryLive } from "../src/persistence/Layers/ProviderSessionRuntime.ts";
 
 import {
@@ -57,6 +58,7 @@ const makeIntegrationFixture = Effect.gen(function* () {
 
   const directoryLayer = ProviderSessionDirectoryLive.pipe(
     Layer.provide(ProviderSessionRuntimeRepositoryLive),
+    Layer.provide(ProjectionProjectHistoryRepositoryLive),
   );
 
   const shared = Layer.mergeAll(

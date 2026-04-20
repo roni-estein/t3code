@@ -13,6 +13,7 @@ import {
   makeSqlitePersistenceLive,
   SqlitePersistenceMemory,
 } from "../../persistence/Layers/Sqlite.ts";
+import { ProjectionProjectHistoryRepositoryLive } from "../../persistence/Layers/ProjectionProjectHistory.ts";
 import { ProviderSessionRuntimeRepositoryLive } from "../../persistence/Layers/ProviderSessionRuntime.ts";
 import { ProviderSessionRuntimeRepository } from "../../persistence/Services/ProviderSessionRuntime.ts";
 import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
@@ -22,9 +23,15 @@ function makeDirectoryLayer<E, R>(persistenceLayer: Layer.Layer<SqlClient.SqlCli
   const runtimeRepositoryLayer = ProviderSessionRuntimeRepositoryLive.pipe(
     Layer.provide(persistenceLayer),
   );
+  const projectHistoryRepositoryLayer = ProjectionProjectHistoryRepositoryLive.pipe(
+    Layer.provide(persistenceLayer),
+  );
   return Layer.mergeAll(
     runtimeRepositoryLayer,
-    ProviderSessionDirectoryLive.pipe(Layer.provide(runtimeRepositoryLayer)),
+    ProviderSessionDirectoryLive.pipe(
+      Layer.provide(runtimeRepositoryLayer),
+      Layer.provide(projectHistoryRepositoryLayer),
+    ),
     NodeServices.layer,
   );
 }
