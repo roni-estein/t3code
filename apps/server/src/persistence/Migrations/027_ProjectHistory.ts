@@ -13,8 +13,11 @@ export default Effect.gen(function* () {
   //   thread_id      — permanent, branded UUID; never rewritten by any code path
   //                    (verified: no UPDATE ... SET thread_id exists anywhere).
   //   project_id     — permanent, the owning project.
-  //   session_key    — mutable. Claude's provider_session_id; rotates every
-  //                    time we rebuild from projections (STEP 2 of waterfall).
+  //   session_key    — mutable. The Claude CLI session ID (the value passed
+  //                    to `claude --resume <key>`). Sourced from
+  //                    provider_session_runtime.resume_cursor_json.resume.
+  //                    Rotates every time we rebuild from projections
+  //                    (STEP 2 of waterfall).
   //   file_reference — mutable. Absolute path to the Claude jsonl. Computed
   //                    lazily from (cwd, session_key) via
   //                    resolveClaudeSessionFilePath; stored denormalized so
@@ -59,13 +62,21 @@ export default Effect.gen(function* () {
     ON project_history(file_reference)
   `;
 
-  // Backfill from existing projection_threads + projection_thread_sessions.
+  // Backfill from existing projection_threads + provider_session_runtime.
   //
-  // file_reference is intentionally left NULL here — migrations are pure SQL
-  // and should not touch the filesystem. The ThreadRecoveryService (or the
-  // projection handler on first activation) computes the expected path from
-  // (projection_projects.workspace_root, projection_thread_sessions.provider_session_id)
-  // via resolveClaudeSessionFilePath and populates the row on demand.
+  // session_key source: provider_session_runtime.resume_cursor_json.resume
+  // is the Claude CLI session ID (the value you'd pass to `claude --resume`).
+  // We extract it via json_extract. `projection_thread_sessions` has a
+  // `provider_session_id` column but it is orphaned — no code path writes
+  // to it today, so reading from it would yield NULL for virtually all
+  // rows. The runtime table is the imperative source of truth and carries
+  // the real value.
+  //
+  // file_reference is intentionally left NULL here — migrations are pure
+  // SQL and should not touch the filesystem. The ThreadRecoveryService
+  // (or the ProjectHistory sync on next activation) computes the expected
+  // path from (cwd, session_key) via resolveClaudeSessionFilePath and
+  // populates the row on demand.
   //
   // INSERT OR IGNORE protects against the (rare) case where a projection
   // handler has already been deployed and pre-populated this table in a
@@ -84,13 +95,13 @@ export default Effect.gen(function* () {
     SELECT
       t.thread_id,
       t.project_id,
-      s.provider_session_id,
+      json_extract(r.resume_cursor_json, '$.resume'),
       NULL,
       CASE WHEN t.archived_at IS NOT NULL THEN 1 ELSE 0 END,
       CASE WHEN t.deleted_at  IS NOT NULL THEN 1 ELSE 0 END,
       t.created_at,
       t.updated_at
     FROM projection_threads t
-    LEFT JOIN projection_thread_sessions s ON s.thread_id = t.thread_id
+    LEFT JOIN provider_session_runtime r ON r.thread_id = t.thread_id
   `;
 });
