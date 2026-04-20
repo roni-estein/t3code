@@ -25,6 +25,7 @@ import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderAdapterValidationError } from "../Errors.ts";
 import { ClaudeAdapter } from "../Services/ClaudeAdapter.ts";
+import { ThreadRecoveryService } from "../Services/ThreadRecovery.ts";
 import { makeClaudeAdapterLive, type ClaudeAdapterLiveOptions } from "./ClaudeAdapter.ts";
 
 class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
@@ -136,6 +137,7 @@ function makeHarness(config?: {
   readonly nativeEventLogger?: ClaudeAdapterLiveOptions["nativeEventLogger"];
   readonly cwd?: string;
   readonly baseDir?: string;
+  readonly threadRecoveryOverrides?: Parameters<typeof makeThreadRecoveryMockLayer>[0];
 }) {
   const query = new FakeClaudeQuery();
   let createInput:
@@ -164,6 +166,7 @@ function makeHarness(config?: {
 
   return {
     layer: makeClaudeAdapterLive(adapterOptions).pipe(
+      Layer.provide(makeThreadRecoveryMockLayer(config?.threadRecoveryOverrides)),
       Layer.provideMerge(
         ServerConfig.layerTest(
           config?.cwd ?? "/tmp/claude-adapter-test",
@@ -176,6 +179,40 @@ function makeHarness(config?: {
     query,
     getLastCreateQueryInput: () => createInput,
   };
+}
+
+type ThreadRecoveryMockOverrides = Partial<{
+  recover: ThreadRecoveryService["Type"]["recover"];
+  recoverStream: ThreadRecoveryService["Type"]["recoverStream"];
+  streamEvents: ThreadRecoveryService["Type"]["streamEvents"];
+  debugBreak: ThreadRecoveryService["Type"]["debugBreak"];
+}>;
+
+/**
+ * ThreadRecoveryService is a dependency of the Claude adapter: when the
+ * pre-spawn session-file check finds that the expected JSONL is missing,
+ * the adapter asks recovery to run the 5-step waterfall. Most tests in
+ * this file construct sessions without cwds or with healthy JSONLs, so
+ * the recovery path isn't reached — default to a mock that returns
+ * "failed" so any unintended invocation is loud (via the fallback log)
+ * rather than silent. Tests exercising the recovery branch pass an
+ * override to simulate a specific outcome.
+ */
+function makeThreadRecoveryMockLayer(
+  overrides?: ThreadRecoveryMockOverrides,
+): Layer.Layer<ThreadRecoveryService> {
+  return Layer.mock(ThreadRecoveryService)({
+    recover: () =>
+      Effect.succeed({
+        _tag: "failed" as const,
+        attemptedSteps: [],
+        detail: "thread recovery not mocked in this adapter test",
+      }),
+    recoverStream: () => Stream.empty,
+    streamEvents: Stream.empty,
+    debugBreak: () => Effect.void,
+    ...overrides,
+  });
 }
 
 function makeDeterministicRandomService(seed = 0x1234_5678): {
@@ -1320,6 +1357,7 @@ describe("ClaudeAdapterLive", () => {
         return query;
       },
     }).pipe(
+      Layer.provide(makeThreadRecoveryMockLayer()),
       Layer.provideMerge(ServerConfig.layerTest("/tmp/claude-adapter-test", "/tmp")),
       Layer.provideMerge(ServerSettingsService.layerTest()),
       Layer.provideMerge(NodeServices.layer),
@@ -1405,6 +1443,7 @@ describe("ClaudeAdapterLive", () => {
         return query;
       },
     }).pipe(
+      Layer.provide(makeThreadRecoveryMockLayer()),
       Layer.provideMerge(ServerConfig.layerTest("/tmp/claude-adapter-test", "/tmp")),
       Layer.provideMerge(ServerSettingsService.layerTest()),
       Layer.provideMerge(NodeServices.layer),
@@ -2603,6 +2642,106 @@ describe("ClaudeAdapterLive", () => {
       Effect.provide(harness.layer),
     );
   });
+
+  it.effect(
+    "substitutes recovered session key when the original JSONL is missing and recovery resumes",
+    () => {
+      const recoveredSessionKey = "11111111-2222-3333-4444-555555555555";
+      const recoverCalls: Array<{ threadId: string; cwd: string }> = [];
+      const harness = makeHarness({
+        cwd: "/tmp/claude-recovery-test",
+        threadRecoveryOverrides: {
+          recover: (input) => {
+            recoverCalls.push({ threadId: input.threadId, cwd: input.cwd });
+            return Effect.succeed({
+              _tag: "resumed" as const,
+              step: "session-key" as const,
+              sessionKey: recoveredSessionKey,
+              filePath: `/tmp/claude-recovery-test/${recoveredSessionKey}.jsonl`,
+            });
+          },
+        },
+      });
+
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+
+        yield* adapter.startSession({
+          threadId: RESUME_THREAD_ID,
+          provider: "claudeAgent",
+          cwd: "/tmp/claude-recovery-test",
+          resumeCursor: {
+            threadId: "resume-thread-1",
+            resume: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+            turnCount: 1,
+          },
+          runtimeMode: "full-access",
+        });
+
+        assert.equal(recoverCalls.length, 1);
+        assert.equal(recoverCalls[0]?.threadId, RESUME_THREAD_ID);
+        assert.equal(recoverCalls[0]?.cwd, "/tmp/claude-recovery-test");
+
+        // The adapter should hand the recovered key to the SDK in place
+        // of the missing original.
+        const createInput = harness.getLastCreateQueryInput();
+        assert.equal(createInput?.options.resume, recoveredSessionKey);
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    },
+  );
+
+  it.effect(
+    "falls back to a fresh Claude session when the recovery waterfall fails to find any JSONL",
+    () => {
+      const harness = makeHarness({
+        cwd: "/tmp/claude-recovery-test",
+        threadRecoveryOverrides: {
+          recover: () =>
+            Effect.succeed({
+              _tag: "failed" as const,
+              attemptedSteps: [
+                "session-key",
+                "file-reference",
+                "scan-current-cwd",
+                "scan-all-cwds",
+              ],
+              detail: "no JSONL located on disk",
+            }),
+        },
+      });
+
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+
+        yield* adapter.startSession({
+          threadId: RESUME_THREAD_ID,
+          provider: "claudeAgent",
+          cwd: "/tmp/claude-recovery-test",
+          resumeCursor: {
+            threadId: "resume-thread-1",
+            resume: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+            turnCount: 1,
+          },
+          runtimeMode: "full-access",
+        });
+
+        // Neither `resume` nor `sessionId` is forwarded to the SDK when
+        // the pre-spawn check decided the original session id was
+        // unusable. Claude SDK generates its own id server-side for this
+        // case — preserves the pre-recovery behavior where a missing
+        // JSONL led to a fresh session without any t3-supplied id.
+        const createInput = harness.getLastCreateQueryInput();
+        assert.equal(createInput?.options.resume, undefined);
+        assert.equal(createInput?.options.sessionId, undefined);
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    },
+  );
 
   it.effect("uses an app-generated Claude session id for fresh sessions", () => {
     const harness = makeHarness();

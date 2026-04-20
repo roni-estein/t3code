@@ -77,6 +77,7 @@ import {
   type ProviderAdapterError,
 } from "../Errors.ts";
 import { ClaudeAdapter, type ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
+import { ThreadRecoveryService } from "../Services/ThreadRecovery.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 
 const PROVIDER = "claudeAgent" as const;
@@ -993,6 +994,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   const sessions = new Map<ThreadId, ClaudeSessionContext>();
   const runtimeEventQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
   const serverSettingsService = yield* ServerSettingsService;
+  const threadRecovery = yield* ThreadRecoveryService;
 
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
   const nextEventId = Effect.map(Random.nextUUIDv4, (id) => EventId.make(id));
@@ -2863,30 +2865,93 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       // GC, crash, mid-write truncation on a t3-serve restart, cwd
       // change — passing `--resume` surfaces as:
       //   "No conversation found with session ID: <id>"
-      // and breaks the user's thread. Detect that up front and start a
-      // fresh Claude session instead. The user's thread history in t3's
-      // sqlite is untouched; only the in-CLI conversational context is
-      // lost (which is already unreachable at this point).
+      // and breaks the user's thread.
+      //
+      // When the expected JSONL is missing, invoke the ThreadRecovery
+      // waterfall: it looks for alternate session keys and scans other
+      // ~/.claude/projects/ directories before falling back to a fresh
+      // session. The user's thread history in t3's sqlite is the ultimate
+      // safety net (surfaced via /recover-thread → db-replay), so even if
+      // every recovery step fails here we still proceed with a fresh
+      // session and preserve the thread.
       const resumeCheckCwd = input.cwd;
-      const safeResumeSessionId =
-        existingResumeSessionId && resumeCheckCwd
-          ? (yield* Effect.promise(() =>
-              claudeSessionFileExists({
-                cwd: resumeCheckCwd,
-                sessionId: existingResumeSessionId,
-              }),
-            ))
-            ? existingResumeSessionId
-            : undefined
-          : existingResumeSessionId;
-      if (existingResumeSessionId && safeResumeSessionId !== existingResumeSessionId) {
-        yield* Effect.logWarning("claude.session-file-missing").pipe(
-          Effect.annotateLogs({
-            threadId: input.threadId,
-            requestedSessionId: existingResumeSessionId,
-            cwd: input.cwd,
+      let safeResumeSessionId: string | undefined;
+      if (!existingResumeSessionId || !resumeCheckCwd) {
+        // Either we weren't trying to resume in the first place, or we
+        // don't have a cwd to look under — leave the resume id as-is and
+        // let the SDK do what it was going to do.
+        safeResumeSessionId = existingResumeSessionId;
+      } else {
+        const sessionFileExists = yield* Effect.promise(() =>
+          claudeSessionFileExists({
+            cwd: resumeCheckCwd,
+            sessionId: existingResumeSessionId,
           }),
         );
+        if (sessionFileExists) {
+          safeResumeSessionId = existingResumeSessionId;
+        } else {
+          yield* Effect.logWarning("claude.session-file-missing").pipe(
+            Effect.annotateLogs({
+              threadId: input.threadId,
+              requestedSessionId: existingResumeSessionId,
+              cwd: resumeCheckCwd,
+            }),
+          );
+          // Run the recovery waterfall. If infrastructure fails (e.g. DB
+          // read error), downgrade to a fresh session so we don't turn a
+          // recoverable-but-degraded state into a hard error for the user.
+          const recoveryOutcome = yield* threadRecovery
+            .recover({ threadId: input.threadId, cwd: resumeCheckCwd })
+            .pipe(
+              Effect.catch((error) =>
+                Effect.gen(function* () {
+                  yield* Effect.logWarning("claude.thread-recovery.errored").pipe(
+                    Effect.annotateLogs({
+                      threadId: input.threadId,
+                      cause: error.message,
+                    }),
+                  );
+                  return {
+                    _tag: "failed" as const,
+                    attemptedSteps: [] as const,
+                    detail: error.message,
+                  };
+                }),
+              ),
+            );
+          if (recoveryOutcome._tag === "resumed") {
+            yield* Effect.logInfo("claude.thread-recovery.resumed").pipe(
+              Effect.annotateLogs({
+                threadId: input.threadId,
+                recoveredStep: recoveryOutcome.step,
+                recoveredSessionKey: recoveryOutcome.sessionKey,
+                recoveredFilePath: recoveryOutcome.filePath,
+              }),
+            );
+            safeResumeSessionId = recoveryOutcome.sessionKey;
+          } else {
+            // `replay-with-transcript` and `failed` both land here: we
+            // couldn't find an on-disk JSONL to resume against, so we
+            // start fresh. The thread's message history in sqlite is
+            // intact — users can still invoke /recover-thread to get a
+            // synthesized transcript if they need to seed a new session
+            // with prior context.
+            yield* Effect.logWarning("claude.thread-recovery.fallback").pipe(
+              Effect.annotateLogs({
+                threadId: input.threadId,
+                outcome: recoveryOutcome._tag,
+                ...(recoveryOutcome._tag === "replay-with-transcript"
+                  ? { messageCount: recoveryOutcome.messageCount }
+                  : {
+                      attemptedSteps: recoveryOutcome.attemptedSteps,
+                      detail: recoveryOutcome.detail,
+                    }),
+              }),
+            );
+            safeResumeSessionId = undefined;
+          }
+        }
       }
 
       const queryOptions: ClaudeQueryOptions = {
