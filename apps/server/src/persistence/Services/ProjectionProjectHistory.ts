@@ -126,6 +126,4 @@ export interface ProjectionProjectHistoryRepositoryShape {
 export class ProjectionProjectHistoryRepository extends Context.Service<
   ProjectionProjectHistoryRepository,
   ProjectionProjectHistoryRepositoryShape
->()(
-  "t3/persistence/Services/ProjectionProjectHistory/ProjectionProjectHistoryRepository",
-) {}
+>()("t3/persistence/Services/ProjectionProjectHistory/ProjectionProjectHistoryRepository") {}

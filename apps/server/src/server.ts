@@ -19,12 +19,14 @@ import { AnalyticsServiceLayerLive } from "./telemetry/Layers/AnalyticsService.t
 import { makeEventNdjsonLogger } from "./provider/Layers/EventNdjsonLogger.ts";
 import { ProviderSessionDirectoryLive } from "./provider/Layers/ProviderSessionDirectory.ts";
 import { ProjectionProjectHistoryRepositoryLive } from "./persistence/Layers/ProjectionProjectHistory.ts";
+import { ProjectionThreadMessageRepositoryLive } from "./persistence/Layers/ProjectionThreadMessages.ts";
 import { ProviderSessionRuntimeRepositoryLive } from "./persistence/Layers/ProviderSessionRuntime.ts";
 import { makeCodexAdapterLive } from "./provider/Layers/CodexAdapter.ts";
 import { makeClaudeAdapterLive } from "./provider/Layers/ClaudeAdapter.ts";
 import { ProviderAdapterRegistryLive } from "./provider/Layers/ProviderAdapterRegistry.ts";
 import { makeProviderServiceLive } from "./provider/Layers/ProviderService.ts";
 import { ProviderSessionReaperLive } from "./provider/Layers/ProviderSessionReaper.ts";
+import { ThreadRecoveryLive } from "./provider/Layers/ThreadRecovery.ts";
 import { CheckpointDiffQueryLive } from "./checkpointing/Layers/CheckpointDiffQuery.ts";
 import { CheckpointStoreLive } from "./checkpointing/Layers/CheckpointStore.ts";
 import { GitCoreLive } from "./git/Layers/GitCore.ts";
@@ -141,6 +143,11 @@ const ProviderSessionDirectoryLayerLive = ProviderSessionDirectoryLive.pipe(
   Layer.provide(ProjectionProjectHistoryRepositoryLive),
 );
 
+const ThreadRecoveryLayerLive = ThreadRecoveryLive.pipe(
+  Layer.provide(ProjectionProjectHistoryRepositoryLive),
+  Layer.provide(ProjectionThreadMessageRepositoryLive),
+);
+
 const ProviderLayerLive = Layer.unwrap(
   Effect.gen(function* () {
     const { providerEventLogPath } = yield* ServerConfig;
@@ -210,6 +217,7 @@ const AuthLayerLive = ServerAuthLive.pipe(
 
 const ProviderRuntimeLayerLive = ProviderSessionReaperLive.pipe(
   Layer.provideMerge(ProviderLayerLive),
+  Layer.provideMerge(ThreadRecoveryLayerLive),
   Layer.provideMerge(OrchestrationLayerLive),
 );
 

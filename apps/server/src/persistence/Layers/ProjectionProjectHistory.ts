@@ -115,16 +115,12 @@ const makeProjectionProjectHistoryRepository = Effect.gen(function* () {
 
   const upsert: ProjectionProjectHistoryRepositoryShape["upsert"] = (row) =>
     upsertProjectHistoryRow(row).pipe(
-      Effect.mapError(
-        toPersistenceSqlError("ProjectionProjectHistoryRepository.upsert:query"),
-      ),
+      Effect.mapError(toPersistenceSqlError("ProjectionProjectHistoryRepository.upsert:query")),
     );
 
   const getById: ProjectionProjectHistoryRepositoryShape["getById"] = (input) =>
     getProjectHistoryRow(input).pipe(
-      Effect.mapError(
-        toPersistenceSqlError("ProjectionProjectHistoryRepository.getById:query"),
-      ),
+      Effect.mapError(toPersistenceSqlError("ProjectionProjectHistoryRepository.getById:query")),
     );
 
   const listByProjectId: ProjectionProjectHistoryRepositoryShape["listByProjectId"] = (input) =>

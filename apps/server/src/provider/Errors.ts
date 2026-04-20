@@ -147,6 +147,31 @@ export class ProviderSessionDirectoryPersistenceError extends Schema.TaggedError
   }
 }
 
+/**
+ * ThreadRecoveryError - Thread recovery waterfall failed to produce a
+ * usable session or transcript.
+ *
+ * Raised by ThreadRecoveryService.recover only when every step in the
+ * waterfall (session-key, file-reference, scan-current-cwd, scan-all-cwds,
+ * db-replay) returned no match or failed outright. The `attemptedSteps`
+ * list captures the trace so the UI can show the user where the recovery
+ * broke.
+ */
+export class ThreadRecoveryError extends Schema.TaggedErrorClass<ThreadRecoveryError>()(
+  "ThreadRecoveryError",
+  {
+    threadId: Schema.String,
+    operation: Schema.String,
+    detail: Schema.String,
+    attemptedSteps: Schema.Array(Schema.String),
+    cause: Schema.optional(Schema.Defect),
+  },
+) {
+  override get message(): string {
+    return `Thread recovery failed for '${this.threadId}' in ${this.operation}: ${this.detail} (attempted: ${this.attemptedSteps.join(", ")})`;
+  }
+}
+
 export type ProviderAdapterError =
   | ProviderAdapterValidationError
   | ProviderAdapterSessionNotFoundError
