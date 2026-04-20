@@ -91,6 +91,10 @@ import {
   ThreadRecoveryService,
   type ThreadRecoveryShape,
 } from "./provider/Services/ThreadRecovery.ts";
+import {
+  SessionReconciliationService,
+  type SessionReconciliationShape,
+} from "./orchestration/Services/SessionReconciliation.ts";
 import { ProjectFaviconResolverLive } from "./project/Layers/ProjectFaviconResolver.ts";
 import {
   ProjectSetupScriptRunner,
@@ -336,6 +340,7 @@ const buildAppUnderTest = (options?: {
     checkpointDiffQuery?: Partial<CheckpointDiffQueryShape>;
     browserTraceCollector?: Partial<BrowserTraceCollectorShape>;
     threadRecovery?: Partial<ThreadRecoveryShape>;
+    sessionReconciliation?: Partial<SessionReconciliationShape>;
     serverLifecycleEvents?: Partial<ServerLifecycleEventsShape>;
     serverRuntimeStartup?: Partial<ServerRuntimeStartupShape>;
     serverEnvironment?: Partial<ServerEnvironmentShape>;
@@ -520,6 +525,26 @@ const buildAppUnderTest = (options?: {
           streamEvents: Stream.empty,
           debugBreak: () => Effect.void,
           ...options?.layers?.threadRecovery,
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(SessionReconciliationService)({
+          reconcileStartupSweep: () => Effect.succeed({ scanned: 0, reconciled: [] }),
+          diagnose: (threadId) =>
+            Effect.succeed({
+              threadId,
+              sessionStatus: null,
+              activeTurnId: null,
+              activeTurnState: null,
+              activeTurnCompletedAt: null,
+              runtimeStatus: null,
+              runtimeLastSeenAt: null,
+              isStuck: false,
+              stuckReason: null,
+            }),
+          reconcileThread: (threadId) =>
+            Effect.succeed({ _tag: "thread-missing" as const, threadId }),
+          ...options?.layers?.sessionReconciliation,
         }),
       ),
     );
