@@ -51,6 +51,38 @@ describe("contextWindow", () => {
     expect(formatContextWindowTokens(258_000)).toBe("258k");
   });
 
+  it("returns null when a context-compaction activity follows the latest window update", () => {
+    // /compact produces a `context-compaction` activity but no immediate
+    // replacement token-usage event. Until the next turn refreshes the
+    // window, we must drop the stale pre-compact snapshot so the
+    // saturation banner (stuck at ~100%) disappears.
+    const snapshot = deriveLatestContextWindowSnapshot([
+      makeActivity("activity-1", "context-window.updated", {
+        usedTokens: 250_000,
+        maxTokens: 258_000,
+      }),
+      makeActivity("activity-2", "context-compaction", { state: "compacted" }),
+    ]);
+
+    expect(snapshot).toBeNull();
+  });
+
+  it("picks up a fresh window update that lands after a compaction", () => {
+    const snapshot = deriveLatestContextWindowSnapshot([
+      makeActivity("activity-1", "context-window.updated", {
+        usedTokens: 250_000,
+        maxTokens: 258_000,
+      }),
+      makeActivity("activity-2", "context-compaction", { state: "compacted" }),
+      makeActivity("activity-3", "context-window.updated", {
+        usedTokens: 12_000,
+        maxTokens: 258_000,
+      }),
+    ]);
+
+    expect(snapshot?.usedTokens).toBe(12_000);
+  });
+
   it("includes total processed tokens when available", () => {
     const snapshot = deriveLatestContextWindowSnapshot([
       makeActivity("activity-1", "context-window.updated", {

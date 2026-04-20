@@ -479,6 +479,29 @@ function TimelineRowContent({ row }: { row: TimelineRow }) {
           );
         })()}
 
+      {row.kind === "message" &&
+        row.message.role === "system" &&
+        (() => {
+          // System messages are server-authored turn markers (e.g. the
+          // `/compact` summary). Render them as a narrow banner instead
+          // of a chat bubble so they read as metadata, not dialogue.
+          return (
+            <div className="my-3 flex justify-center">
+              <div className="flex w-full max-w-xl items-start gap-2 rounded-xl border border-emerald-500/40 bg-emerald-500/5 px-3.5 py-2.5">
+                <CheckIcon className="mt-0.5 size-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                <div className="min-w-0 flex-1">
+                  <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground/90">
+                    {row.message.text}
+                  </p>
+                  <p className="mt-1 text-[10px] text-muted-foreground/40">
+                    {formatTimestamp(row.message.createdAt, ctx.timestampFormat)}
+                  </p>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
       {row.kind === "proposed-plan" && (
         <div className="min-w-0 px-1 py-0.5">
           <ProposedPlanCard

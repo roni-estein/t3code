@@ -43,6 +43,14 @@ describe("deriveContextWindowWarning", () => {
     assert.equal(deriveContextWindowWarning(null), null);
   });
 
+  it("returns null post-compact (deriveLatestContextWindowSnapshot drops to null after /compact)", () => {
+    // After /compact, `deriveLatestContextWindowSnapshot` returns null
+    // until the next `context-window.updated` activity arrives. The
+    // banner should clear in that window rather than stay stuck at
+    // ~100% saturation from the pre-compact snapshot.
+    assert.equal(deriveContextWindowWarning(null), null);
+  });
+
   it("returns null when the provider auto-compacts (redundant nag)", () => {
     const result = deriveContextWindowWarning(
       snapshot({
