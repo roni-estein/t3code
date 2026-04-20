@@ -20,7 +20,7 @@ import * as Os from "node:os";
 import * as Path from "node:path";
 
 import { IsoDateTime, type ThreadId } from "@t3tools/contracts";
-import { Effect, Layer, Option, PubSub, Stream } from "effect";
+import { Cause, Effect, Layer, Option, PubSub, Stream } from "effect";
 
 import { ProjectionProjectHistoryRepository } from "../../persistence/Services/ProjectionProjectHistory.ts";
 import { ProjectionThreadMessageRepository } from "../../persistence/Services/ProjectionThreadMessages.ts";
@@ -429,9 +429,9 @@ const makeThreadRecovery = (options?: ThreadRecoveryLiveOptions) =>
         return Option.some(outcome);
       });
 
-    const recover: ThreadRecoveryShape["recover"] = (input) =>
+    const recoverBody = (input: RecoverInput) =>
       Effect.gen(function* () {
-        const claudeHome = resolveClaudeHome(input.claudeHome ?? defaultClaudeHome);
+        const claudeHome = resolveClaudeHome(defaultClaudeHome);
         const now = Date.now();
         yield* emitStarted(input.threadId, input.cwd);
 
@@ -481,8 +481,57 @@ const makeThreadRecovery = (options?: ThreadRecoveryLiveOptions) =>
         });
       });
 
+    /**
+     * recover - Wrap `recoverBody` so that any unexpected error path
+     * still emits a terminal `completed` event. Without this, a
+     * persistence failure at step 1 or step 5 would leave downstream
+     * stream observers hanging forever (no "completed" to signal
+     * end-of-stream).
+     *
+     * Uses `matchCauseEffect` instead of `tapError` so that defects and
+     * interrupts also trigger the terminal event — `tapError` would
+     * only catch typed failures.
+     */
+    const recover: ThreadRecoveryShape["recover"] = (input) =>
+      recoverBody(input).pipe(
+        Effect.matchCauseEffect({
+          onSuccess: (outcome) => Effect.succeed(outcome),
+          onFailure: (cause) =>
+            emitCompleted(input.threadId, {
+              _tag: "failed",
+              attemptedSteps: STEP_ORDER,
+              detail: Cause.pretty(cause),
+            }).pipe(Effect.andThen(Effect.failCause(cause))),
+        }),
+      );
+
+    /**
+     * recoverStream - Subscribe-then-invoke so the caller's stream sees
+     * the `started` event. Using `PubSub.subscribe` directly (vs
+     * `Stream.fromPubSub`) makes the subscription synchronous with
+     * respect to the subsequent fork, eliminating the
+     * subscribe-after-publish race.
+     *
+     * Errors from `recover` are captured as a `completed: failed` event
+     * inside `recover` itself, so the forked fiber can safely ignore
+     * its own error channel — the stream will always see a `completed`
+     * event before the subscription queue runs dry.
+     */
+    const recoverStream: ThreadRecoveryShape["recoverStream"] = (input) =>
+      Stream.unwrap(
+        Effect.gen(function* () {
+          const subscription = yield* PubSub.subscribe(pubsub);
+          yield* Effect.forkScoped(recover(input).pipe(Effect.ignoreCause({ log: true })));
+          return Stream.fromSubscription(subscription).pipe(
+            Stream.filter((event) => event.threadId === input.threadId),
+            Stream.takeUntil((event) => event._tag === "completed"),
+          );
+        }),
+      );
+
     return {
       recover,
+      recoverStream,
       get streamEvents() {
         return Stream.fromPubSub(pubsub);
       },

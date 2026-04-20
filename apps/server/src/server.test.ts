@@ -87,6 +87,10 @@ import {
   BrowserTraceCollector,
   type BrowserTraceCollectorShape,
 } from "./observability/Services/BrowserTraceCollector.ts";
+import {
+  ThreadRecoveryService,
+  type ThreadRecoveryShape,
+} from "./provider/Services/ThreadRecovery.ts";
 import { ProjectFaviconResolverLive } from "./project/Layers/ProjectFaviconResolver.ts";
 import {
   ProjectSetupScriptRunner,
@@ -331,6 +335,7 @@ const buildAppUnderTest = (options?: {
     projectionSnapshotQuery?: Partial<ProjectionSnapshotQueryShape>;
     checkpointDiffQuery?: Partial<CheckpointDiffQueryShape>;
     browserTraceCollector?: Partial<BrowserTraceCollectorShape>;
+    threadRecovery?: Partial<ThreadRecoveryShape>;
     serverLifecycleEvents?: Partial<ServerLifecycleEventsShape>;
     serverRuntimeStartup?: Partial<ServerRuntimeStartupShape>;
     serverEnvironment?: Partial<ServerEnvironmentShape>;
@@ -501,6 +506,19 @@ const buildAppUnderTest = (options?: {
               diff: "",
             }),
           ...options?.layers?.checkpointDiffQuery,
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(ThreadRecoveryService)({
+          recover: () =>
+            Effect.succeed({
+              _tag: "failed" as const,
+              attemptedSteps: [],
+              detail: "thread recovery not mocked in this test",
+            }),
+          recoverStream: () => Stream.empty,
+          streamEvents: Stream.empty,
+          ...options?.layers?.threadRecovery,
         }),
       ),
     );

@@ -51,6 +51,7 @@ import type {
   OrchestrationSubscribeThreadInput,
   OrchestrationThreadStreamItem,
 } from "./orchestration.ts";
+import type { RecoverInput, RecoveryOutcome, RecoveryProgressEvent } from "./threadRecovery.ts";
 import type { EnvironmentId } from "./baseSchemas.ts";
 import { EditorId } from "./editor.ts";
 import { ServerSettings, type ClientSettings, type ServerSettingsPatch } from "./settings.ts";
@@ -288,5 +289,22 @@ export interface EnvironmentApi {
         onResubscribe?: () => void;
       },
     ) => () => void;
+  };
+  threadRecovery: {
+    /**
+     * Drive the server-side 5-step recovery waterfall for a thread whose
+     * Claude CLI session is unreachable. Resolves with the terminal
+     * `RecoveryOutcome` once the server emits `completed`. Intermediate
+     * progress events (started / step-started / step-succeeded /
+     * step-skipped / step-failed / completed) are delivered to
+     * `options.onProgress` so a UI overlay can render the waterfall as it
+     * runs.
+     */
+    recover: (
+      input: RecoverInput,
+      options?: {
+        onProgress?: (event: RecoveryProgressEvent) => void;
+      },
+    ) => Promise<RecoveryOutcome>;
   };
 }

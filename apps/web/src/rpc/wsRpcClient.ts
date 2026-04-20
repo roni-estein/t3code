@@ -6,7 +6,11 @@ import {
   type GitStatusStreamEvent,
   type LocalApi,
   ORCHESTRATION_WS_METHODS,
+  type RecoverInput,
+  type RecoveryOutcome,
+  type RecoveryProgressEvent,
   type ServerSettingsPatch,
+  THREAD_RECOVERY_WS_METHODS,
   WS_METHODS,
 } from "@t3tools/contracts";
 import { applyGitStatusStreamEvent } from "@t3tools/shared/git";
@@ -50,6 +54,10 @@ type RpcInputStreamMethod<TTag extends RpcTag> =
 
 interface GitRunStackedActionOptions {
   readonly onProgress?: (event: GitActionProgressEvent) => void;
+}
+
+interface ThreadRecoveryRecoverOptions {
+  readonly onProgress?: (event: RecoveryProgressEvent) => void;
 }
 
 export interface WsRpcClient {
@@ -118,6 +126,22 @@ export interface WsRpcClient {
     readonly getFullThreadDiff: RpcUnaryMethod<typeof ORCHESTRATION_WS_METHODS.getFullThreadDiff>;
     readonly subscribeShell: RpcStreamMethod<typeof ORCHESTRATION_WS_METHODS.subscribeShell>;
     readonly subscribeThread: RpcInputStreamMethod<typeof ORCHESTRATION_WS_METHODS.subscribeThread>;
+  };
+  readonly threadRecovery: {
+    /**
+     * Drive the 5-step recovery waterfall for a broken/unreachable Claude
+     * thread. The returned Promise resolves with the terminal
+     * `RecoveryOutcome` when the server emits the final `completed` event.
+     * Progress events for every rung (started / step-* / completed) are
+     * delivered to `options.onProgress` so a UI overlay can render them.
+     *
+     * Rejects if the stream closes without a `completed` event (transport
+     * drop, RPC error, etc.).
+     */
+    readonly recover: (
+      input: RecoverInput,
+      options?: ThreadRecoveryRecoverOptions,
+    ) => Promise<RecoveryOutcome>;
   };
 }
 
@@ -251,6 +275,27 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
           listener,
           options,
         ),
+    },
+    threadRecovery: {
+      recover: async (input, options) => {
+        let outcome: RecoveryOutcome | null = null;
+
+        await transport.requestStream(
+          (client) => client[THREAD_RECOVERY_WS_METHODS.recover](input),
+          (event) => {
+            options?.onProgress?.(event);
+            if (event._tag === "completed") {
+              outcome = event.outcome;
+            }
+          },
+        );
+
+        if (outcome) {
+          return outcome;
+        }
+
+        throw new Error("Thread recovery stream completed without emitting a terminal outcome.");
+      },
     },
   };
 }

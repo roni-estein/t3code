@@ -68,6 +68,12 @@ import {
   TerminalWriteInput,
 } from "./terminal.ts";
 import {
+  RecoverInput,
+  RecoveryProgressEvent,
+  THREAD_RECOVERY_WS_METHODS,
+  ThreadRecoveryRpcError,
+} from "./threadRecovery.ts";
+import {
   ServerConfigStreamEvent,
   ServerConfig,
   ServerLifecycleStreamEvent,
@@ -339,6 +345,21 @@ export const WsOrchestrationSubscribeThreadRpc = Rpc.make(
   },
 );
 
+/**
+ * Thread recovery - stream the waterfall's progress to the client.
+ *
+ * The stream emits a sequence of `RecoveryProgressEvent`s and closes
+ * after a `completed` event. The client uses `completed.outcome` to
+ * decide what to do next (resume the original Claude session, inject
+ * a replay transcript into a fresh session, or surface the failure).
+ */
+export const WsThreadRecoveryRecoverRpc = Rpc.make(THREAD_RECOVERY_WS_METHODS.recover, {
+  payload: RecoverInput,
+  success: RecoveryProgressEvent,
+  error: ThreadRecoveryRpcError,
+  stream: true,
+});
+
 export const WsSubscribeTerminalEventsRpc = Rpc.make(WS_METHODS.subscribeTerminalEvents, {
   payload: Schema.Struct({}),
   success: TerminalEvent,
@@ -403,4 +424,5 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationLoadOlderThreadMessagesRpc,
   WsOrchestrationSubscribeShellRpc,
   WsOrchestrationSubscribeThreadRpc,
+  WsThreadRecoveryRecoverRpc,
 );

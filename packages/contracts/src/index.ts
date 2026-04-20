@@ -14,4 +14,5 @@ export * from "./orchestration.ts";
 export * from "./editor.ts";
 export * from "./project.ts";
 export * from "./filesystem.ts";
+export * from "./threadRecovery.ts";
 export * from "./rpc.ts";

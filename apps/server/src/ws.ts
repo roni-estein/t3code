@@ -18,7 +18,9 @@ import {
   ProjectWriteFileError,
   OrchestrationReplayEventsError,
   FilesystemBrowseError,
+  THREAD_RECOVERY_WS_METHODS,
   ThreadId,
+  ThreadRecoveryRpcError,
   type TerminalEvent,
   WS_METHODS,
   WsRpcGroup,
@@ -43,6 +45,7 @@ import {
   observeRpcStreamEffect,
 } from "./observability/RpcInstrumentation.ts";
 import { ProviderRegistry } from "./provider/Services/ProviderRegistry.ts";
+import { ThreadRecoveryService } from "./provider/Services/ThreadRecovery.ts";
 import { ServerLifecycleEvents } from "./serverLifecycleEvents.ts";
 import { ServerRuntimeStartup } from "./serverRuntimeStartup.ts";
 import { ServerSettingsService } from "./serverSettings.ts";
@@ -141,6 +144,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
       const gitStatusBroadcaster = yield* GitStatusBroadcaster;
       const terminalManager = yield* TerminalManager;
       const providerRegistry = yield* ProviderRegistry;
+      const threadRecovery = yield* ThreadRecoveryService;
       const config = yield* ServerConfig;
       const lifecycleEvents = yield* ServerLifecycleEvents;
       const serverSettings = yield* ServerSettingsService;
@@ -1041,6 +1045,26 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
               return Stream.concat(Stream.fromIterable(snapshotEvents), liveEvents);
             }),
             { "rpc.aggregate": "server" },
+          ),
+        [THREAD_RECOVERY_WS_METHODS.recover]: (input) =>
+          observeRpcStream(
+            THREAD_RECOVERY_WS_METHODS.recover,
+            threadRecovery.recoverStream(input).pipe(
+              Stream.mapError(
+                (cause) =>
+                  new ThreadRecoveryRpcError({
+                    message: cause.message ?? "Thread recovery failed",
+                    attemptedSteps:
+                      "attemptedSteps" in cause && Array.isArray(cause.attemptedSteps)
+                        ? (cause.attemptedSteps as ReadonlyArray<
+                            (typeof ThreadRecoveryRpcError.Type.attemptedSteps)[number]
+                          >)
+                        : [],
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "threadRecovery" },
           ),
         [WS_METHODS.subscribeAuthAccess]: (_input) =>
           observeRpcStreamEffect(

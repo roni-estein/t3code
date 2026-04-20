@@ -45,6 +45,9 @@ export function createEnvironmentApi(rpcClient: WsRpcClient): EnvironmentApi {
       subscribeThread: (input, callback, options) =>
         rpcClient.orchestration.subscribeThread(input, callback, options),
     },
+    threadRecovery: {
+      recover: (input, options) => rpcClient.threadRecovery.recover(input, options),
+    },
   };
 }
 
