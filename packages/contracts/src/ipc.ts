@@ -53,9 +53,13 @@ import type {
 } from "./orchestration.ts";
 import type {
   DebugBreakInput,
+  DiagnoseInput,
+  ReconcileInput,
+  ReconcileOutcome,
   RecoverInput,
   RecoveryOutcome,
   RecoveryProgressEvent,
+  SessionDiagnosticReport,
 } from "./threadRecovery.ts";
 import type { EnvironmentId } from "./baseSchemas.ts";
 import { EditorId } from "./editor.ts";
@@ -318,5 +322,18 @@ export interface EnvironmentApi {
      * slash command.
      */
     debugBreak: (input: DebugBreakInput) => Promise<void>;
+    /**
+     * Read-only divergence report for a thread. Joins the projector's
+     * session view with provider runtime state so the UI can explain
+     * why a thread looks stuck. Backs `/diagnose-thread [<uuid>]`.
+     */
+    diagnose: (input: DiagnoseInput) => Promise<SessionDiagnosticReport>;
+    /**
+     * Run Phase-1 reconciliation on a single thread. Dispatches a
+     * synthetic `thread.session.set` (status='ready',
+     * activeTurnId=null) if the thread is stuck, otherwise no-ops.
+     * Backs `/reconcile-thread [<uuid>]`.
+     */
+    reconcile: (input: ReconcileInput) => Promise<ReconcileOutcome>;
   };
 }

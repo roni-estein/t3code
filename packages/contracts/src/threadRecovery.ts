@@ -14,7 +14,8 @@
  */
 import { Schema } from "effect";
 
-import { NonNegativeInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { IsoDateTime, NonNegativeInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { OrchestrationSessionStatus, ProviderSessionRuntimeStatus } from "./orchestration.ts";
 
 /**
  * RecoveryStep - Identifier for each rung of the recovery waterfall.
@@ -168,6 +169,104 @@ export const DebugBreakInput = Schema.Struct({
 export type DebugBreakInput = typeof DebugBreakInput.Type;
 
 /**
+ * DiagnoseInput - Payload for `threadRecovery.diagnose`.
+ *
+ * Returns a read-only divergence report for the thread identified by
+ * `threadId`. Used by the `/diagnose-thread [<uuid>]` slash command.
+ */
+export const DiagnoseInput = Schema.Struct({
+  threadId: ThreadId,
+});
+export type DiagnoseInput = typeof DiagnoseInput.Type;
+
+/**
+ * SessionDiagnosticReport - Divergence snapshot for a single thread.
+ *
+ * Joins signals from three sources:
+ *   - `projection_thread_sessions` (projector-owned): `sessionStatus`,
+ *     `activeTurnId`. This is what the UI's "Working" pill reads.
+ *   - `projection_turns` (projector-owned): `activeTurnState`,
+ *     `activeTurnCompletedAt`. Lets the diagnose logic tell whether
+ *     the referenced active turn is actually still running or has
+ *     completed.
+ *   - `provider_session_runtime` (imperative): `runtimeStatus`,
+ *     `runtimeLastSeenAt`. Lets the diagnose logic tell whether the
+ *     provider process is still alive.
+ *
+ * `isStuck` is true when the projection says "running" but either (a)
+ * there is no active turn id, (b) the active turn has completed, or
+ * (c) the runtime is stopped. Mirrors the startup sweep's predicate.
+ */
+export const SessionDiagnosticReport = Schema.Struct({
+  threadId: ThreadId,
+  sessionStatus: Schema.NullOr(OrchestrationSessionStatus),
+  activeTurnId: Schema.NullOr(Schema.String),
+  activeTurnState: Schema.NullOr(Schema.String),
+  activeTurnCompletedAt: Schema.NullOr(IsoDateTime),
+  runtimeStatus: Schema.NullOr(ProviderSessionRuntimeStatus),
+  runtimeLastSeenAt: Schema.NullOr(IsoDateTime),
+  isStuck: Schema.Boolean,
+  stuckReason: Schema.NullOr(Schema.String),
+});
+export type SessionDiagnosticReport = typeof SessionDiagnosticReport.Type;
+
+/**
+ * ReconcileInput - Payload for `threadRecovery.reconcile`.
+ *
+ * Runs Phase-1 reconciliation logic on a single thread on demand. Safe
+ * to invoke anytime because the synthetic `session.ready` event is
+ * idempotent at the projector.
+ */
+export const ReconcileInput = Schema.Struct({
+  threadId: ThreadId,
+});
+export type ReconcileInput = typeof ReconcileInput.Type;
+
+/**
+ * ReconcileOutcome - Result of a single-thread reconcile attempt.
+ *
+ * - `reconciled`: a synthetic `session.ready` event was dispatched and
+ *   the projection row should now reflect `status='ready'` +
+ *   `active_turn_id=null`. The pre-reconcile report is included for
+ *   the UI's audit toast.
+ * - `not-stuck`: the thread was already in a healthy state; no event
+ *   was dispatched.
+ * - `thread-missing`: the thread id is unknown to the read model. UI
+ *   should treat this as user error (bad uuid argument).
+ */
+const ReconcileOutcomeReconciled = Schema.TaggedStruct("reconciled", {
+  report: SessionDiagnosticReport,
+  reconciledAt: IsoDateTime,
+});
+
+const ReconcileOutcomeNotStuck = Schema.TaggedStruct("not-stuck", {
+  report: SessionDiagnosticReport,
+});
+
+const ReconcileOutcomeThreadMissing = Schema.TaggedStruct("thread-missing", {
+  threadId: ThreadId,
+});
+
+export const ReconcileOutcome = Schema.Union([
+  ReconcileOutcomeReconciled,
+  ReconcileOutcomeNotStuck,
+  ReconcileOutcomeThreadMissing,
+]);
+export type ReconcileOutcome = typeof ReconcileOutcome.Type;
+
+/**
+ * SessionReconciliationRpcError - Wire-facing error for the diagnose /
+ * reconcile RPCs. Mirrors `ThreadRecoveryRpcError` in shape.
+ */
+export class SessionReconciliationRpcError extends Schema.TaggedErrorClass<SessionReconciliationRpcError>()(
+  "SessionReconciliationRpcError",
+  {
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {}
+
+/**
  * WS method identifiers for the thread-recovery RPC family.
  * Namespaced under `threadRecovery.` to keep WS method names grouped
  * by aggregate (matches the existing `git.*`, `terminal.*`, etc.
@@ -176,4 +275,6 @@ export type DebugBreakInput = typeof DebugBreakInput.Type;
 export const THREAD_RECOVERY_WS_METHODS = {
   recover: "threadRecovery.recover",
   debugBreak: "threadRecovery.debugBreak",
+  diagnose: "threadRecovery.diagnose",
+  reconcile: "threadRecovery.reconcile",
 } as const;

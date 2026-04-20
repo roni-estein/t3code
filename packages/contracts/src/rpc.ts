@@ -69,8 +69,13 @@ import {
 } from "./terminal.ts";
 import {
   DebugBreakInput,
+  DiagnoseInput,
+  ReconcileInput,
+  ReconcileOutcome,
   RecoverInput,
   RecoveryProgressEvent,
+  SessionDiagnosticReport,
+  SessionReconciliationRpcError,
   THREAD_RECOVERY_WS_METHODS,
   ThreadRecoveryRpcError,
 } from "./threadRecovery.ts";
@@ -379,6 +384,35 @@ export const WsThreadRecoveryDebugBreakRpc = Rpc.make(THREAD_RECOVERY_WS_METHODS
   error: ThreadRecoveryRpcError,
 });
 
+/**
+ * Thread recovery diagnose - read-only divergence report for a thread.
+ *
+ * Returns a `SessionDiagnosticReport` joining `projection_thread_sessions`,
+ * `projection_turns`, and `provider_session_runtime` so the UI can show
+ * the user why a thread appears stuck without taking any remediation
+ * action. Wired to the `/diagnose-thread [<uuid>]` slash command.
+ */
+export const WsThreadRecoveryDiagnoseRpc = Rpc.make(THREAD_RECOVERY_WS_METHODS.diagnose, {
+  payload: DiagnoseInput,
+  success: SessionDiagnosticReport,
+  error: SessionReconciliationRpcError,
+});
+
+/**
+ * Thread recovery reconcile - run Phase-1 reconciliation on one thread.
+ *
+ * Wraps the same synthetic-event logic the startup sweep uses, so
+ * calling this is safe any time: if the thread is not stuck the RPC
+ * no-ops; if it is stuck, it dispatches a `thread.session.set` event
+ * with `status='ready'` and `activeTurnId=null`. Wired to the
+ * `/reconcile-thread [<uuid>]` slash command.
+ */
+export const WsThreadRecoveryReconcileRpc = Rpc.make(THREAD_RECOVERY_WS_METHODS.reconcile, {
+  payload: ReconcileInput,
+  success: ReconcileOutcome,
+  error: SessionReconciliationRpcError,
+});
+
 export const WsSubscribeTerminalEventsRpc = Rpc.make(WS_METHODS.subscribeTerminalEvents, {
   payload: Schema.Struct({}),
   success: TerminalEvent,
@@ -445,4 +479,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationSubscribeThreadRpc,
   WsThreadRecoveryRecoverRpc,
   WsThreadRecoveryDebugBreakRpc,
+  WsThreadRecoveryDiagnoseRpc,
+  WsThreadRecoveryReconcileRpc,
 );
