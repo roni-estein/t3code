@@ -2164,6 +2164,47 @@ describe("ProviderRuntimeIngestion", () => {
     expect(activity?.tone).toBe("info");
   });
 
+  it("posts a system message alongside the compaction activity so the timeline shows a turn marker", async () => {
+    // PR 5: /compact previously produced only an invisible activity
+    // row, so the chat UI showed the user's own bubble followed by
+    // silence. A system-role message must now be written into
+    // `projection_thread_messages` so the timeline renders a banner
+    // mirroring Claude CLI's "Compacted — ..." terminal output.
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    harness.emit({
+      type: "thread.state.changed",
+      eventId: asEventId("evt-thread-compacted-system-msg"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-1"),
+      payload: {
+        state: "compacted",
+        detail: { source: "provider" },
+      },
+    });
+
+    const thread = await waitForThread(harness.engine, (entry) =>
+      entry.messages.some((message: ProviderRuntimeTestMessage) => message.role === "system"),
+    );
+
+    const systemMessage = thread.messages.find(
+      (candidate: ProviderRuntimeTestMessage) => candidate.role === "system",
+    );
+    expect(systemMessage).toBeDefined();
+    expect(systemMessage?.text).toMatch(/compacted/i);
+    expect(systemMessage?.streaming).toBe(false);
+
+    // The activity must still be emitted — we add to the pipeline, not
+    // replace the existing surface.
+    const activity = thread.activities.find(
+      (candidate: ProviderRuntimeTestActivity) => candidate.kind === "context-compaction",
+    );
+    expect(activity).toBeDefined();
+  });
+
   it("projects Codex task lifecycle chunks into thread activities", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();

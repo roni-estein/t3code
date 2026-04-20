@@ -578,6 +578,36 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
+    case "thread.message.system.post": {
+      // Server-authored system message (e.g. /compact summary banner).
+      // Emits thread.message-sent with role='system' so the projector
+      // and timeline pick it up through the normal message pipeline.
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.message-sent",
+        payload: {
+          threadId: command.threadId,
+          messageId: command.messageId,
+          role: "system",
+          text: command.text,
+          turnId: command.turnId ?? null,
+          streaming: false,
+          createdAt: command.createdAt,
+          updatedAt: command.createdAt,
+        },
+      };
+    }
+
     case "thread.proposed-plan.upsert": {
       yield* requireThread({
         readModel,
