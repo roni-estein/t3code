@@ -2002,6 +2002,37 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       yield* backfillAssistantTextBlocksFromSnapshot(context, message);
     }
 
+    // Capture per-API-call usage so `context.lastKnownTokenUsage` stays fresh
+    // on turns without sub-agent work. `BetaMessage.usage` is the per-response
+    // billing snapshot — on a single API call the sum of `input_tokens +
+    // cache_creation_input_tokens + cache_read_input_tokens` equals the true
+    // working-context size. Without this capture, the turn-complete emitter
+    // has no per-call anchor and must suppress `usedTokens` entirely (see
+    // `completeTurn`), causing the context-window banner to hide.
+    const assistantUsage = (message.message as { usage?: unknown } | undefined)?.usage;
+    if (assistantUsage) {
+      const normalizedUsage = normalizeClaudeTokenUsage(
+        assistantUsage,
+        context.lastKnownContextWindow,
+      );
+      if (normalizedUsage) {
+        context.lastKnownTokenUsage = normalizedUsage;
+        const usageStamp = yield* makeEventStamp();
+        yield* offerRuntimeEvent({
+          type: "thread.token-usage.updated",
+          eventId: usageStamp.eventId,
+          provider: PROVIDER,
+          createdAt: usageStamp.createdAt,
+          threadId: context.session.threadId,
+          ...(context.turnState ? { turnId: asCanonicalTurnId(context.turnState.turnId) } : {}),
+          payload: {
+            usage: normalizedUsage,
+          },
+          providerRefs: nativeProviderRefs(context),
+        });
+      }
+    }
+
     context.lastAssistantUuid = message.uuid;
     yield* updateResumeCursor(context);
   });
