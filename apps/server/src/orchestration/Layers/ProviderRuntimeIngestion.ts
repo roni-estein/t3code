@@ -1216,14 +1216,40 @@ const make = Effect.fn("make")(function* () {
     // Claude CLI terminal UI by also posting a system message describing
     // the compaction, so the timeline shows a clear turn marker between
     // pre- and post-compact history.
+    //
+    // PR 7 (post-compact eager ready-state): compact completion does not
+    // emit a `turn.completed` event of its own, so `projection_thread_sessions`
+    // stays pinned at `status='running'` until something else reconciles
+    // it (live-observed 2-3 minute window of "Working" UI). Dispatch an
+    // additional synthetic `thread.session.set` to flip status back to
+    // `ready` and clear `active_turn_id` in the same projector cycle as
+    // the banner + activity. Mirrors the PR-2 SessionReconciliation
+    // pattern (synthetic `thread.session.set` routed through the engine,
+    // not a raw SQL write).
     if (event.type === "thread.state.changed" && event.payload.state === "compacted") {
       yield* orchestrationEngine.dispatch({
         type: "thread.message.system.post",
         commandId: providerCommandId(event, "compact-system-message"),
         threadId: thread.id,
         messageId: MessageId.make(`system:compact:${event.eventId}`),
-        text: "Context compacted. Earlier conversation history has been summarised. Skills, system prompts, and tool configurations are preserved.",
+        text: "Context compacted. Earlier conversation history has been summarised. Skills and tools preserved. Ready to continue.",
         ...(eventTurnId ? { turnId: eventTurnId } : {}),
+        createdAt: now,
+      });
+
+      yield* orchestrationEngine.dispatch({
+        type: "thread.session.set",
+        commandId: providerCommandId(event, "compact-session-ready"),
+        threadId: thread.id,
+        session: {
+          threadId: thread.id,
+          status: "ready",
+          providerName: thread.session?.providerName ?? event.provider,
+          runtimeMode: thread.session?.runtimeMode ?? "full-access",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: now,
+        },
         createdAt: now,
       });
     }

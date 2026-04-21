@@ -2205,6 +2205,65 @@ describe("ProviderRuntimeIngestion", () => {
     expect(activity).toBeDefined();
   });
 
+  it("flips session status to ready and clears active_turn_id when compact completes", async () => {
+    // PR 7: compact completion does not emit its own turn.completed
+    // event, so projection_thread_sessions was stuck at status='running'
+    // until the next unrelated session update reconciled it. Observed
+    // 2-3 minute "Working" window after /compact. The ingestion layer
+    // now dispatches a synthetic `thread.session.set` alongside the
+    // compact banner + activity so the projection flips to `ready` in
+    // the same projector cycle.
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    // Simulate a turn in-flight so status is "running" with an active turn id.
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-compact-started"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-compact"),
+    });
+
+    await waitForThread(harness.engine, (entry) => entry.session?.status === "running");
+
+    harness.emit({
+      type: "thread.state.changed",
+      eventId: asEventId("evt-thread-compacted-session-ready"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-compact"),
+      payload: {
+        state: "compacted",
+        detail: { source: "provider" },
+      },
+    });
+
+    const thread = await waitForThread(
+      harness.engine,
+      (entry) => entry.session?.status === "ready",
+    );
+
+    expect(thread.session?.status).toBe("ready");
+    expect(thread.session?.activeTurnId).toBeNull();
+    expect(thread.session?.lastError).toBeNull();
+
+    // Banner + activity must still be present — the ready-flip is
+    // additive, it doesn't replace the existing surfaces.
+    const systemMessage = thread.messages.find(
+      (candidate: ProviderRuntimeTestMessage) => candidate.role === "system",
+    );
+    expect(systemMessage).toBeDefined();
+    expect(systemMessage?.text).toMatch(/compacted/i);
+
+    const activity = thread.activities.find(
+      (candidate: ProviderRuntimeTestActivity) => candidate.kind === "context-compaction",
+    );
+    expect(activity).toBeDefined();
+  });
+
   it("projects Codex task lifecycle chunks into thread activities", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();
