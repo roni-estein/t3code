@@ -168,6 +168,25 @@ interface ClaudeSessionContext {
   lastAssistantUuid: string | undefined;
   lastThreadStartedId: string | undefined;
   stopped: boolean;
+  /**
+   * Transcript synthesised by ThreadRecoveryService's db-replay step,
+   * stashed here between session-spawn and the first user turn. When
+   * set, the next `sendTurn` prepends it to the user's prompt text and
+   * clears the field. One-shot.
+   *
+   * Populated either from:
+   *   - automatic recovery: spawn time, when the waterfall returns
+   *     `replay-with-transcript` because no usable JSONL was found.
+   *   - manual: `/rehydrate-thread` sets the service-level flag; the
+   *     adapter consumes it at spawn and forces db-replay.
+   */
+  pendingRehydrationTranscript:
+    | {
+        readonly transcript: string;
+        readonly messageCount: number;
+        readonly source: "auto" | "forced";
+      }
+    | undefined;
 }
 
 interface ClaudeQueryRuntime extends AsyncIterable<SDKMessage> {
@@ -2874,9 +2893,82 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       // safety net (surfaced via /recover-thread → db-replay), so even if
       // every recovery step fails here we still proceed with a fresh
       // session and preserve the thread.
+      //
+      // Phase 6 (plan #523): `replay-with-transcript` no longer silently
+      // drops the transcript. The recovered text is stashed on the
+      // session context and prepended to the first user turn below (see
+      // `sendTurn`). Manual force-rehydrate (via the
+      // `threadRecovery.rehydrate` RPC / `/rehydrate-thread` command)
+      // bypasses the JSONL-existence check entirely and invokes the
+      // waterfall in forced db-replay mode.
       const resumeCheckCwd = input.cwd;
       let safeResumeSessionId: string | undefined;
-      if (!existingResumeSessionId || !resumeCheckCwd) {
+      let pendingRehydrationTranscript: ClaudeSessionContext["pendingRehydrationTranscript"] =
+        undefined;
+
+      // Consume any pending manual-rehydrate marker before the normal
+      // JSONL-existence check. If the user asked for a forced rebuild
+      // we always skip to db-replay regardless of on-disk state.
+      const forceRehydrate = yield* threadRecovery.consumePendingRehydrate(input.threadId).pipe(
+        Effect.catch((error) =>
+          Effect.gen(function* () {
+            yield* Effect.logWarning("claude.thread-recovery.rehydrate-flag-read-failed").pipe(
+              Effect.annotateLogs({
+                threadId: input.threadId,
+                cause: error.message,
+              }),
+            );
+            return false;
+          }),
+        ),
+      );
+
+      if (forceRehydrate && resumeCheckCwd) {
+        yield* Effect.logInfo("claude.thread-recovery.rehydrate-forced").pipe(
+          Effect.annotateLogs({
+            threadId: input.threadId,
+            cwd: resumeCheckCwd,
+          }),
+        );
+        const forcedOutcome = yield* threadRecovery
+          .recover({
+            threadId: input.threadId,
+            cwd: resumeCheckCwd,
+            force: "db-replay",
+          })
+          .pipe(
+            Effect.catch((error) =>
+              Effect.gen(function* () {
+                yield* Effect.logWarning("claude.thread-recovery.forced-errored").pipe(
+                  Effect.annotateLogs({
+                    threadId: input.threadId,
+                    cause: error.message,
+                  }),
+                );
+                return {
+                  _tag: "failed" as const,
+                  attemptedSteps: [] as const,
+                  detail: error.message,
+                };
+              }),
+            ),
+          );
+        if (forcedOutcome._tag === "replay-with-transcript") {
+          pendingRehydrationTranscript = {
+            transcript: forcedOutcome.transcript,
+            messageCount: forcedOutcome.messageCount,
+            source: "forced",
+          };
+        } else {
+          yield* Effect.logWarning("claude.thread-recovery.forced-no-transcript").pipe(
+            Effect.annotateLogs({
+              threadId: input.threadId,
+              outcome: forcedOutcome._tag,
+            }),
+          );
+        }
+        safeResumeSessionId = undefined;
+      } else if (!existingResumeSessionId || !resumeCheckCwd) {
         // Either we weren't trying to resume in the first place, or we
         // don't have a cwd to look under — leave the resume id as-is and
         // let the SDK do what it was going to do.
@@ -2930,23 +3022,37 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
               }),
             );
             safeResumeSessionId = recoveryOutcome.sessionKey;
+          } else if (recoveryOutcome._tag === "replay-with-transcript") {
+            // Phase 6 (plan #523): carry the synthesised transcript into
+            // the session so the next user turn is prepended with
+            // reconstructed context. Prior to this we logged then dropped
+            // the transcript, which meant any thread with a broken JSONL
+            // chain silently started fresh.
+            yield* Effect.logInfo("claude.thread-recovery.fallback").pipe(
+              Effect.annotateLogs({
+                threadId: input.threadId,
+                outcome: recoveryOutcome._tag,
+                messageCount: recoveryOutcome.messageCount,
+                transcriptBytes: recoveryOutcome.transcript.length,
+              }),
+            );
+            pendingRehydrationTranscript = {
+              transcript: recoveryOutcome.transcript,
+              messageCount: recoveryOutcome.messageCount,
+              source: "auto",
+            };
+            safeResumeSessionId = undefined;
           } else {
-            // `replay-with-transcript` and `failed` both land here: we
-            // couldn't find an on-disk JSONL to resume against, so we
-            // start fresh. The thread's message history in sqlite is
-            // intact — users can still invoke /recover-thread to get a
-            // synthesized transcript if they need to seed a new session
-            // with prior context.
+            // `failed`: the recovery service couldn't even produce a
+            // transcript (rare — db-replay is the floor of the
+            // waterfall). Start fresh with no prior context; users can
+            // invoke `/rehydrate-thread` to retry.
             yield* Effect.logWarning("claude.thread-recovery.fallback").pipe(
               Effect.annotateLogs({
                 threadId: input.threadId,
                 outcome: recoveryOutcome._tag,
-                ...(recoveryOutcome._tag === "replay-with-transcript"
-                  ? { messageCount: recoveryOutcome.messageCount }
-                  : {
-                      attemptedSteps: recoveryOutcome.attemptedSteps,
-                      detail: recoveryOutcome.detail,
-                    }),
+                attemptedSteps: recoveryOutcome.attemptedSteps,
+                detail: recoveryOutcome.detail,
               }),
             );
             safeResumeSessionId = undefined;
@@ -3026,6 +3132,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         lastAssistantUuid: resumeState?.resumeSessionAt,
         lastThreadStartedId: undefined,
         stopped: false,
+        pendingRehydrationTranscript: pendingRehydrationTranscript,
       };
       yield* Ref.set(contextRef, context);
       sessions.set(threadId, context);
@@ -3174,7 +3281,43 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       providerRefs: {},
     });
 
-    const message = yield* buildUserMessageEffect(input, {
+    // Transcript injection (plan #523 Phase 6).
+    //
+    // If the session was spawned with a stashed recovery transcript,
+    // prepend it to this turn's prompt so Claude sees the prior
+    // conversation as context before the user's actual message. The
+    // transcript carries its own markers (`## Prior conversation…`) so
+    // Claude reads it as a reference block rather than as the user's
+    // own words.
+    //
+    // One-shot: clear the stash after use so subsequent turns send
+    // only the user's current text. Works with whatever truncation
+    // ThreadRecoveryService already applied — we don't add a second
+    // layer here.
+    let turnInput = input;
+    const stash = context.pendingRehydrationTranscript;
+    if (stash) {
+      const originalText = typeof input.input === "string" ? input.input : "";
+      const header = `[t3 rehydration: previous conversation context follows. This thread's Claude CLI session could not be restored from disk. ${stash.messageCount} prior messages from thread history are provided below as reference context. Continue the conversation as if you remembered them.]`;
+      const injectedText = `${header}\n\n## Prior conversation (oldest first)\n\n${stash.transcript}\n\n## Current user message follows\n\n${originalText}`;
+      turnInput = {
+        ...input,
+        input: injectedText,
+      };
+      context.pendingRehydrationTranscript = undefined;
+      yield* Effect.logInfo("claude.thread-recovery.transcript-injected").pipe(
+        Effect.annotateLogs({
+          threadId: input.threadId,
+          source: stash.source,
+          messageCount: stash.messageCount,
+          transcriptBytes: stash.transcript.length,
+          promptBytesBefore: originalText.length,
+          promptBytesAfter: injectedText.length,
+        }),
+      );
+    }
+
+    const message = yield* buildUserMessageEffect(turnInput, {
       fileSystem,
       attachmentsDir: serverConfig.attachmentsDir,
     });

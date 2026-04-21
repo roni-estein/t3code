@@ -1112,6 +1112,28 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             ),
             { "rpc.aggregate": "threadRecovery" },
           ),
+        [THREAD_RECOVERY_WS_METHODS.rehydrate]: (input) =>
+          observeRpcEffect(
+            THREAD_RECOVERY_WS_METHODS.rehydrate,
+            threadRecovery.scheduleRehydrate(input.threadId).pipe(
+              Effect.map(
+                () =>
+                  ({ _tag: "scheduled" as const, threadId: input.threadId }) satisfies {
+                    readonly _tag: "scheduled";
+                    readonly threadId: typeof input.threadId;
+                  },
+              ),
+              Effect.mapError(
+                (cause) =>
+                  new ThreadRecoveryRpcError({
+                    message: cause.message ?? "Failed to schedule rehydrate",
+                    attemptedSteps: [],
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "threadRecovery" },
+          ),
         [WS_METHODS.subscribeAuthAccess]: (_input) =>
           observeRpcStreamEffect(
             WS_METHODS.subscribeAuthAccess,

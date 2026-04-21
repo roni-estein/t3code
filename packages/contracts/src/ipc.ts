@@ -59,6 +59,8 @@ import type {
   RecoverInput,
   RecoveryOutcome,
   RecoveryProgressEvent,
+  RehydrateInput,
+  RehydrateOutcome,
   SessionDiagnosticReport,
 } from "./threadRecovery.ts";
 import type { EnvironmentId } from "./baseSchemas.ts";
@@ -335,5 +337,13 @@ export interface EnvironmentApi {
      * Backs `/reconcile-thread [<uuid>]`.
      */
     reconcile: (input: ReconcileInput) => Promise<ReconcileOutcome>;
+    /**
+     * Schedule a forced db-replay recovery for this thread's next
+     * session spawn. The server stashes an in-memory flag; the next
+     * turn injects a synthesised transcript into Claude's prompt so
+     * earlier conversation is preserved even when the JSONL chain is
+     * broken. Backs `/rehydrate-thread [<uuid>]`.
+     */
+    rehydrate: (input: RehydrateInput) => Promise<RehydrateOutcome>;
   };
 }

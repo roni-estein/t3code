@@ -186,6 +186,8 @@ type ThreadRecoveryMockOverrides = Partial<{
   recoverStream: ThreadRecoveryService["Type"]["recoverStream"];
   streamEvents: ThreadRecoveryService["Type"]["streamEvents"];
   debugBreak: ThreadRecoveryService["Type"]["debugBreak"];
+  scheduleRehydrate: ThreadRecoveryService["Type"]["scheduleRehydrate"];
+  consumePendingRehydrate: ThreadRecoveryService["Type"]["consumePendingRehydrate"];
 }>;
 
 /**
@@ -211,6 +213,8 @@ function makeThreadRecoveryMockLayer(
     recoverStream: () => Stream.empty,
     streamEvents: Stream.empty,
     debugBreak: () => Effect.void,
+    scheduleRehydrate: () => Effect.void,
+    consumePendingRehydrate: () => Effect.succeed(false),
     ...overrides,
   });
 }
@@ -2736,6 +2740,163 @@ describe("ClaudeAdapterLive", () => {
         const createInput = harness.getLastCreateQueryInput();
         assert.equal(createInput?.options.resume, undefined);
         assert.equal(createInput?.options.sessionId, undefined);
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    },
+  );
+
+  it.effect(
+    "injects the recovered transcript into the first user turn when the waterfall returns replay-with-transcript",
+    () => {
+      const transcript = "User: hello\n\nAssistant: world";
+      const harness = makeHarness({
+        cwd: "/tmp/claude-recovery-test",
+        threadRecoveryOverrides: {
+          recover: () =>
+            Effect.succeed({
+              _tag: "replay-with-transcript" as const,
+              step: "db-replay" as const,
+              transcript,
+              messageCount: 2,
+            }),
+        },
+      });
+
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+
+        const session = yield* adapter.startSession({
+          threadId: RESUME_THREAD_ID,
+          provider: "claudeAgent",
+          cwd: "/tmp/claude-recovery-test",
+          resumeCursor: {
+            threadId: "resume-thread-1",
+            resume: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+            turnCount: 1,
+          },
+          runtimeMode: "full-access",
+        });
+
+        // Neither resume nor sessionId forwarded — fresh session on
+        // the SDK side because we couldn't validate a JSONL.
+        const createInput = harness.getLastCreateQueryInput();
+        assert.equal(createInput?.options.resume, undefined);
+
+        yield* adapter.sendTurn({
+          threadId: session.threadId,
+          input: "what did we discuss?",
+          attachments: [],
+        });
+
+        const firstPromptText = yield* Effect.promise(() => readFirstPromptText(createInput));
+        assert.isString(firstPromptText);
+        assert.include(firstPromptText!, transcript);
+        assert.include(firstPromptText!, "Prior conversation");
+        assert.include(firstPromptText!, "what did we discuss?");
+
+        // Second turn should NOT re-inject the transcript (one-shot).
+        yield* adapter.sendTurn({
+          threadId: session.threadId,
+          input: "follow up",
+          attachments: [],
+        });
+
+        // `readFirstPromptText` already consumed the first turn; we
+        // need to inspect the SDK queue's second message. The SDK is
+        // given a streaming iterable so the harness captured a single
+        // input object — the second turn lands on the same iterable.
+        // Easier assertion: read the second message via the same
+        // iterable.
+        const secondPromptText = yield* Effect.promise(async () => {
+          const iterator = createInput?.prompt[Symbol.asyncIterator]();
+          if (!iterator) return undefined;
+          const next = await iterator.next();
+          if (next.done) return undefined;
+          const content = next.value.message.content;
+          if (typeof content === "string") return content;
+          const block = content[0];
+          return block && block.type === "text" ? block.text : undefined;
+        });
+        assert.isString(secondPromptText);
+        assert.notInclude(secondPromptText!, transcript);
+        assert.include(secondPromptText!, "follow up");
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    },
+  );
+
+  it.effect(
+    "force-rehydrate flag causes the adapter to call recover({ force: 'db-replay' }) and inject the transcript",
+    () => {
+      const transcript = "User: earlier\n\nAssistant: noted";
+      const recoverCalls: Array<{
+        threadId: string;
+        cwd: string;
+        force?: string;
+      }> = [];
+      const consumeCalls: Array<string> = [];
+      const harness = makeHarness({
+        cwd: "/tmp/claude-recovery-test",
+        threadRecoveryOverrides: {
+          consumePendingRehydrate: (threadId) => {
+            consumeCalls.push(String(threadId));
+            return Effect.succeed(true);
+          },
+          recover: (input) => {
+            recoverCalls.push({
+              threadId: String(input.threadId),
+              cwd: input.cwd,
+              ...(input.force ? { force: input.force } : {}),
+            });
+            return Effect.succeed({
+              _tag: "replay-with-transcript" as const,
+              step: "db-replay" as const,
+              transcript,
+              messageCount: 2,
+            });
+          },
+        },
+      });
+
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+
+        // Note: resumeCursor is supplied so the adapter has a resume
+        // id to check against, but the force flag takes precedence and
+        // skips the JSONL-existence check entirely.
+        const session = yield* adapter.startSession({
+          threadId: RESUME_THREAD_ID,
+          provider: "claudeAgent",
+          cwd: "/tmp/claude-recovery-test",
+          resumeCursor: {
+            threadId: "resume-thread-1",
+            resume: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+            turnCount: 1,
+          },
+          runtimeMode: "full-access",
+        });
+
+        assert.deepEqual(consumeCalls, [String(RESUME_THREAD_ID)]);
+        assert.equal(recoverCalls.length, 1);
+        assert.equal(recoverCalls[0]?.force, "db-replay");
+
+        const createInput = harness.getLastCreateQueryInput();
+        assert.equal(createInput?.options.resume, undefined);
+
+        yield* adapter.sendTurn({
+          threadId: session.threadId,
+          input: "continue",
+          attachments: [],
+        });
+
+        const firstPromptText = yield* Effect.promise(() => readFirstPromptText(createInput));
+        assert.isString(firstPromptText);
+        assert.include(firstPromptText!, transcript);
+        assert.include(firstPromptText!, "continue");
       }).pipe(
         Effect.provideService(Random.Random, makeDeterministicRandomService()),
         Effect.provide(harness.layer),

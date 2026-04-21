@@ -486,6 +486,22 @@ describe("parseStandaloneComposerSlashCommand", () => {
     });
   });
 
+  it("parses standalone /rehydrate-thread command", () => {
+    expect(parseStandaloneComposerSlashCommand("/rehydrate-thread")).toEqual({
+      command: "rehydrate-thread",
+      threadId: null,
+    });
+  });
+
+  it("parses /rehydrate-thread with a uuid argument", () => {
+    expect(
+      parseStandaloneComposerSlashCommand("/rehydrate-thread a715587d-c374-400b-84a7-8d6f4deee6fb"),
+    ).toEqual({
+      command: "rehydrate-thread",
+      threadId: "a715587d-c374-400b-84a7-8d6f4deee6fb",
+    });
+  });
+
   it("parses /recover-thread with a uuid argument", () => {
     expect(
       parseStandaloneComposerSlashCommand("/recover-thread 450c6cc7-84fe-4deb-9e40-03ed870b67c1"),

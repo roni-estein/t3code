@@ -22,6 +22,11 @@ export type ComposerTriggerKind = "path" | "slash-command" | "slash-model" | "sk
  *                          one.
  * - `reconcile-thread`   — runs Phase-1 reconciliation on demand.
  *                          Accepts an optional `<uuid>` arg.
+ * - `rehydrate-thread`   — force the next turn to rebuild Claude's
+ *                          context from the thread's projected messages
+ *                          (for threads whose JSONL chain is broken and
+ *                          automatic recovery can't help). Accepts an
+ *                          optional `<uuid>` arg.
  */
 export type ComposerSlashCommand =
   | "model"
@@ -30,7 +35,8 @@ export type ComposerSlashCommand =
   | "recover-thread"
   | "debug-break-thread"
   | "diagnose-thread"
-  | "reconcile-thread";
+  | "reconcile-thread"
+  | "rehydrate-thread";
 
 export interface ComposerTrigger {
   kind: ComposerTriggerKind;
@@ -333,6 +339,7 @@ const COMMANDS_ACCEPTING_THREAD_ID = new Set<StandaloneComposerSlashCommand>([
   "recover-thread",
   "diagnose-thread",
   "reconcile-thread",
+  "rehydrate-thread",
 ]);
 
 // RFC-4122-ish uuid shape (loose: accepts any 8-4-4-4-12 hex string).
@@ -362,6 +369,7 @@ export function parseStandaloneComposerSlashCommand(
     case "recover-thread":
     case "diagnose-thread":
     case "reconcile-thread":
+    case "rehydrate-thread":
       command = name;
       break;
     default:

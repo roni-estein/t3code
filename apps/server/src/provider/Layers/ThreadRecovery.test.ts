@@ -652,3 +652,68 @@ it.live("ThreadRecovery skips filesystem scans outside the freshness window", ()
     assert.equal(outcome._tag, "replay-with-transcript");
   }).pipe(Effect.provide(makeRecoveryLayer({ claudeHome: staleScanHome }))),
 );
+
+const forceReplayHome = makeClaudeHome();
+it.live(
+  "ThreadRecovery force db-replay: bypasses steps 1-4 even when a stored session_key would resolve",
+  () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("thread-recovery-force");
+      const projectId = ProjectId.make("project-recovery-force");
+      const cwd = "/tmp/force-workspace";
+      const sessionKey = "session-force-live";
+
+      // A healthy session file that step 1 would normally resume.
+      writeSessionFile(forceReplayHome, cwd, sessionKey);
+      yield* seedProjectHistory({ threadId, projectId, sessionKey });
+
+      // Seed messages so db-replay has something to render.
+      yield* seedMessages(threadId, [
+        { role: "user", text: "original question" },
+        { role: "assistant", text: "original answer" },
+      ]);
+
+      const recovery = yield* ThreadRecoveryService;
+      const outcome: RecoveryOutcome = yield* recovery.recover({
+        threadId,
+        cwd,
+        force: "db-replay",
+      });
+
+      assert.equal(outcome._tag, "replay-with-transcript");
+      if (outcome._tag === "replay-with-transcript") {
+        assert.equal(outcome.messageCount, 2);
+        assert.include(outcome.transcript, "original question");
+        assert.include(outcome.transcript, "original answer");
+      }
+    }).pipe(Effect.provide(makeRecoveryLayer({ claudeHome: forceReplayHome }))),
+);
+
+const rehydrateFlagHome = makeClaudeHome();
+it.live(
+  "ThreadRecovery scheduleRehydrate/consumePendingRehydrate: one-shot read-and-clear semantics",
+  () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("thread-recovery-rehydrate-flag");
+      const otherThread = ThreadId.make("thread-recovery-rehydrate-other");
+
+      const recovery = yield* ThreadRecoveryService;
+
+      // Initially no flag set for either thread.
+      const initial = yield* recovery.consumePendingRehydrate(threadId);
+      assert.equal(initial, false);
+
+      // Schedule only `threadId` — other thread must remain unaffected.
+      yield* recovery.scheduleRehydrate(threadId);
+
+      const otherPending = yield* recovery.consumePendingRehydrate(otherThread);
+      assert.equal(otherPending, false);
+
+      const firstConsume = yield* recovery.consumePendingRehydrate(threadId);
+      assert.equal(firstConsume, true);
+
+      // One-shot: second consume yields false.
+      const secondConsume = yield* recovery.consumePendingRehydrate(threadId);
+      assert.equal(secondConsume, false);
+    }).pipe(Effect.provide(makeRecoveryLayer({ claudeHome: rehydrateFlagHome }))),
+);
