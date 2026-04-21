@@ -465,6 +465,12 @@ export interface ChatComposerProps {
    * the reconcile RPC and surfaces the outcome in a toast.
    */
   handleReconcileThread: () => void;
+  /**
+   * Invoked when the user selects `/rehydrate-thread`. Parent calls
+   * `threadRecovery.rehydrate` to flag the thread for forced db-replay
+   * on its next turn, then surfaces a toast.
+   */
+  handleRehydrateThread: () => void;
 
   focusComposer: () => void;
   scheduleComposerFocus: () => void;
@@ -539,6 +545,7 @@ export const ChatComposer = memo(
       handleDebugBreakThread,
       handleDiagnoseThread,
       handleReconcileThread,
+      handleRehydrateThread,
       togglePlanSidebar,
       focusComposer,
       scheduleComposerFocus,
@@ -798,6 +805,14 @@ export const ChatComposer = memo(
             label: "/reconcile-thread",
             description:
               "Heal a stuck session projection (pass <uuid> to reconcile another thread)",
+          },
+          {
+            id: "slash:rehydrate-thread",
+            type: "slash-command",
+            command: "rehydrate-thread",
+            label: "/rehydrate-thread",
+            description:
+              "Force the next turn to rebuild context from thread history (pass <uuid> for another thread)",
           },
         ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>;
         const providerSlashCommandItems = (selectedProviderStatus?.slashCommands ?? []).map(
@@ -1466,6 +1481,9 @@ export const ChatComposer = memo(
             case "reconcile-thread":
               handleReconcileThread();
               break;
+            case "rehydrate-thread":
+              handleRehydrateThread();
+              break;
             default: {
               const _exhaustive: never = item.command;
               return _exhaustive;
@@ -1530,6 +1548,7 @@ export const ChatComposer = memo(
         handleDebugBreakThread,
         handleDiagnoseThread,
         handleReconcileThread,
+        handleRehydrateThread,
         onProviderModelSelect,
         resolveActiveComposerTrigger,
       ],

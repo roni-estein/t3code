@@ -13,6 +13,8 @@ import {
   type RecoverInput,
   type RecoveryOutcome,
   type RecoveryProgressEvent,
+  type RehydrateInput,
+  type RehydrateOutcome,
   type ServerSettingsPatch,
   type SessionDiagnosticReport,
   THREAD_RECOVERY_WS_METHODS,
@@ -172,6 +174,14 @@ export interface WsRpcClient {
      * `/reconcile-thread [<uuid>]` slash command.
      */
     readonly reconcile: (input: ReconcileInput) => Promise<ReconcileOutcome>;
+
+    /**
+     * Schedule a forced db-replay recovery for a thread so the next
+     * session spawn injects a synthesised transcript. Used when the
+     * JSONL chain is broken and automatic recovery can't rebuild
+     * context. Wired to the `/rehydrate-thread [<uuid>]` slash command.
+     */
+    readonly rehydrate: (input: RehydrateInput) => Promise<RehydrateOutcome>;
   };
 }
 
@@ -332,6 +342,8 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
         transport.request((client) => client[THREAD_RECOVERY_WS_METHODS.diagnose](input)),
       reconcile: (input) =>
         transport.request((client) => client[THREAD_RECOVERY_WS_METHODS.reconcile](input)),
+      rehydrate: (input) =>
+        transport.request((client) => client[THREAD_RECOVERY_WS_METHODS.rehydrate](input)),
     },
   };
 }

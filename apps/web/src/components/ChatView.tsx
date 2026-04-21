@@ -2126,6 +2126,62 @@ export default function ChatView(props: ChatViewProps) {
     },
     [activeThread, environmentId],
   );
+
+  // /rehydrate-thread [<uuid>] — schedule a forced db-replay on the
+  // thread's next turn. The server stashes an in-memory flag; the
+  // adapter consumes it at the next session spawn and injects a
+  // synthesised transcript from projection_thread_messages. Used when
+  // the JSONL chain is broken and automatic recovery can't help.
+  const handleRehydrateThread = useCallback(
+    (overrideThreadId: ThreadId | null) => {
+      const targetId = overrideThreadId ?? activeThread?.id ?? null;
+      if (!targetId || !environmentId) {
+        toastManager.add({
+          type: "warning",
+          title: "Cannot rehydrate",
+          description: "Open a thread (or pass a uuid) before running /rehydrate-thread.",
+        });
+        return;
+      }
+      const api = readEnvironmentApi(environmentId);
+      if (!api) {
+        toastManager.add({
+          type: "error",
+          title: "Environment not connected",
+          description: "Pair the environment before running /rehydrate-thread.",
+        });
+        return;
+      }
+      void api.threadRecovery
+        .rehydrate({ threadId: targetId })
+        .then((outcome) => {
+          switch (outcome._tag) {
+            case "scheduled":
+              toastManager.add({
+                type: "info",
+                title: "Thread rehydrate scheduled",
+                description: "Next turn will rebuild context from thread history.",
+              });
+              break;
+            case "thread-missing":
+              toastManager.add({
+                type: "warning",
+                title: "Unknown thread",
+                description: `No thread found for ${outcome.threadId}.`,
+              });
+              break;
+          }
+        })
+        .catch((error: unknown) => {
+          toastManager.add({
+            type: "error",
+            title: "Failed to schedule rehydrate",
+            description: error instanceof Error ? error.message : String(error),
+          });
+        });
+    },
+    [activeThread, environmentId],
+  );
   const togglePlanSidebar = useCallback(() => {
     setPlanSidebarOpen((open) => {
       if (open) {
@@ -2646,6 +2702,9 @@ export default function ChatView(props: ChatViewProps) {
           break;
         case "reconcile-thread":
           handleReconcileThread(overrideThreadId);
+          break;
+        case "rehydrate-thread":
+          handleRehydrateThread(overrideThreadId);
           break;
         default: {
           const _exhaustive: never = standaloneSlashCommand.command;
@@ -3659,6 +3718,7 @@ export default function ChatView(props: ChatViewProps) {
               handleDebugBreakThread={handleDebugBreakThread}
               handleDiagnoseThread={() => handleDiagnoseThread(null)}
               handleReconcileThread={() => handleReconcileThread(null)}
+              handleRehydrateThread={() => handleRehydrateThread(null)}
               togglePlanSidebar={togglePlanSidebar}
               focusComposer={focusComposer}
               scheduleComposerFocus={scheduleComposerFocus}
