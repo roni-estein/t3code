@@ -19,6 +19,7 @@ import { AnalyticsServiceLayerLive } from "./telemetry/Layers/AnalyticsService.t
 import { makeEventNdjsonLogger } from "./provider/Layers/EventNdjsonLogger.ts";
 import { ProviderSessionDirectoryLive } from "./provider/Layers/ProviderSessionDirectory.ts";
 import { ProjectionProjectHistoryRepositoryLive } from "./persistence/Layers/ProjectionProjectHistory.ts";
+import { ProjectionProjectHistorySessionsRepositoryLive } from "./persistence/Layers/ProjectionProjectHistorySessions.ts";
 import { ProjectionThreadMessageRepositoryLive } from "./persistence/Layers/ProjectionThreadMessages.ts";
 import { ProviderSessionRuntimeRepositoryLive } from "./persistence/Layers/ProviderSessionRuntime.ts";
 import { makeCodexAdapterLive } from "./provider/Layers/CodexAdapter.ts";
@@ -141,10 +142,12 @@ const CheckpointingLayerLive = Layer.empty.pipe(
 const ProviderSessionDirectoryLayerLive = ProviderSessionDirectoryLive.pipe(
   Layer.provide(ProviderSessionRuntimeRepositoryLive),
   Layer.provide(ProjectionProjectHistoryRepositoryLive),
+  Layer.provide(ProjectionProjectHistorySessionsRepositoryLive),
 );
 
 const ThreadRecoveryLayerLive = ThreadRecoveryLive.pipe(
   Layer.provide(ProjectionProjectHistoryRepositoryLive),
+  Layer.provide(ProjectionProjectHistorySessionsRepositoryLive),
   Layer.provide(ProjectionThreadMessageRepositoryLive),
 );
 
