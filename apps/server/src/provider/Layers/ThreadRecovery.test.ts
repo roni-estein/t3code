@@ -431,6 +431,201 @@ it.live(
     }).pipe(Effect.provide(makeRecoveryLayer({ claudeHome: ownedSelfHome }))),
 );
 
+const stalenessNewerSameThreadHome = makeClaudeHome();
+it.live(
+  "ThreadRecovery step 1 prefers a strictly-newer same-thread JSONL over the stored session_key",
+  () =>
+    Effect.gen(function* () {
+      // Phase 3 staleness check. Stored session_key resolves to a valid
+      // JSONL, but a fresher same-thread JSONL exists in the cwd
+      // (simulates a /compact where the imperative sync failed to
+      // advance session_key). The waterfall should return the fresher
+      // JSONL's session_key.
+      const threadId = ThreadId.make("thread-staleness-newer");
+      const projectId = ProjectId.make("project-staleness-newer");
+      const cwd = "/tmp/staleness-newer-workspace";
+
+      const storedKey = "session-staleness-stored";
+      const newerKey = "session-staleness-newer";
+      const storedPath = writeSessionFile(stalenessNewerSameThreadHome, cwd, storedKey);
+      const newerPath = writeSessionFile(stalenessNewerSameThreadHome, cwd, newerKey);
+
+      // Stored is older, newer is newer — pinned via utimesSync.
+      const older = new Date(Date.now() - 10 * 60 * 1000);
+      const newer = new Date(Date.now() - 1 * 60 * 1000);
+      fs.utimesSync(storedPath, older, older);
+      fs.utimesSync(newerPath, newer, newer);
+
+      yield* seedProjectHistory({
+        threadId,
+        projectId,
+        sessionKey: storedKey,
+      });
+
+      // Catalog both session_keys to this thread so the ownership
+      // filter accepts the newer one.
+      const sessionsRepo = yield* ProjectionProjectHistorySessionsRepository;
+      const t0 = IsoDateTime.make(new Date().toISOString());
+      yield* sessionsRepo.recordSession({
+        threadId,
+        sessionKey: storedKey,
+        firstSeenAt: t0,
+      });
+      yield* sessionsRepo.recordSession({
+        threadId,
+        sessionKey: newerKey,
+        firstSeenAt: t0,
+      });
+
+      const recovery = yield* ThreadRecoveryService;
+      const outcome: RecoveryOutcome = yield* recovery.recover({ threadId, cwd });
+
+      assert.equal(outcome._tag, "resumed");
+      if (outcome._tag === "resumed") {
+        assert.equal(outcome.step, "session-key");
+        assert.equal(outcome.sessionKey, newerKey);
+        assert.equal(outcome.filePath, newerPath);
+      }
+    }).pipe(Effect.provide(makeRecoveryLayer({ claudeHome: stalenessNewerSameThreadHome }))),
+);
+
+const stalenessNewerForeignHome = makeClaudeHome();
+it.live("ThreadRecovery step 1 ignores a strictly-newer foreign-thread JSONL when preferring", () =>
+  Effect.gen(function* () {
+    // Belt-and-suspenders: ownership filter still wins even in the
+    // staleness-check path. Stored JSONL is ours; newer JSONL in cwd
+    // is owned by another thread — waterfall must return the stored
+    // one, not the newer foreign one.
+    const threadId = ThreadId.make("thread-staleness-self");
+    const otherThread = ThreadId.make("thread-staleness-foreign");
+    const projectId = ProjectId.make("project-staleness-foreign");
+    const cwd = "/tmp/staleness-foreign-workspace";
+
+    const storedKey = "session-staleness-self-stored";
+    const foreignKey = "session-staleness-foreign-newer";
+    const storedPath = writeSessionFile(stalenessNewerForeignHome, cwd, storedKey);
+    const foreignPath = writeSessionFile(stalenessNewerForeignHome, cwd, foreignKey);
+
+    const older = new Date(Date.now() - 10 * 60 * 1000);
+    const newer = new Date(Date.now() - 1 * 60 * 1000);
+    fs.utimesSync(storedPath, older, older);
+    fs.utimesSync(foreignPath, newer, newer);
+
+    yield* seedProjectHistory({
+      threadId,
+      projectId,
+      sessionKey: storedKey,
+    });
+
+    const sessionsRepo = yield* ProjectionProjectHistorySessionsRepository;
+    const t0 = IsoDateTime.make(new Date().toISOString());
+    yield* sessionsRepo.recordSession({
+      threadId,
+      sessionKey: storedKey,
+      firstSeenAt: t0,
+    });
+    yield* sessionsRepo.recordSession({
+      threadId: otherThread,
+      sessionKey: foreignKey,
+      firstSeenAt: t0,
+    });
+
+    const recovery = yield* ThreadRecoveryService;
+    const outcome: RecoveryOutcome = yield* recovery.recover({ threadId, cwd });
+
+    assert.equal(outcome._tag, "resumed");
+    if (outcome._tag === "resumed") {
+      assert.equal(outcome.step, "session-key");
+      assert.equal(outcome.sessionKey, storedKey);
+      assert.equal(outcome.filePath, storedPath);
+    }
+  }).pipe(Effect.provide(makeRecoveryLayer({ claudeHome: stalenessNewerForeignHome }))),
+);
+
+const stalenessAloneHome = makeClaudeHome();
+it.live(
+  "ThreadRecovery step 1 returns the stored session_key when no other JSONLs exist in cwd",
+  () =>
+    Effect.gen(function* () {
+      // Baseline: single JSONL in cwd, stored session_key points at it.
+      // Staleness check finds no newer candidate and returns stored.
+      const threadId = ThreadId.make("thread-staleness-alone");
+      const projectId = ProjectId.make("project-staleness-alone");
+      const cwd = "/tmp/staleness-alone-workspace";
+
+      const storedKey = "session-staleness-alone";
+      const storedPath = writeSessionFile(stalenessAloneHome, cwd, storedKey);
+
+      yield* seedProjectHistory({
+        threadId,
+        projectId,
+        sessionKey: storedKey,
+      });
+
+      const recovery = yield* ThreadRecoveryService;
+      const outcome: RecoveryOutcome = yield* recovery.recover({ threadId, cwd });
+
+      assert.equal(outcome._tag, "resumed");
+      if (outcome._tag === "resumed") {
+        assert.equal(outcome.step, "session-key");
+        assert.equal(outcome.sessionKey, storedKey);
+        assert.equal(outcome.filePath, storedPath);
+      }
+    }).pipe(Effect.provide(makeRecoveryLayer({ claudeHome: stalenessAloneHome }))),
+);
+
+const stalenessEqualMtimeHome = makeClaudeHome();
+it.live(
+  "ThreadRecovery step 1 returns the stored session_key when newest sibling has equal mtime",
+  () =>
+    Effect.gen(function* () {
+      // Strictly-newer rule: equality does NOT qualify as newer, so the
+      // stored key wins. This pins the threshold choice against
+      // accidental drift to >= semantics.
+      const threadId = ThreadId.make("thread-staleness-equal");
+      const projectId = ProjectId.make("project-staleness-equal");
+      const cwd = "/tmp/staleness-equal-workspace";
+
+      const storedKey = "session-staleness-equal-stored";
+      const siblingKey = "session-staleness-equal-sibling";
+      const storedPath = writeSessionFile(stalenessEqualMtimeHome, cwd, storedKey);
+      const siblingPath = writeSessionFile(stalenessEqualMtimeHome, cwd, siblingKey);
+
+      const pinned = new Date(Date.now() - 5 * 60 * 1000);
+      fs.utimesSync(storedPath, pinned, pinned);
+      fs.utimesSync(siblingPath, pinned, pinned);
+
+      yield* seedProjectHistory({
+        threadId,
+        projectId,
+        sessionKey: storedKey,
+      });
+
+      const sessionsRepo = yield* ProjectionProjectHistorySessionsRepository;
+      const t0 = IsoDateTime.make(new Date().toISOString());
+      yield* sessionsRepo.recordSession({
+        threadId,
+        sessionKey: storedKey,
+        firstSeenAt: t0,
+      });
+      yield* sessionsRepo.recordSession({
+        threadId,
+        sessionKey: siblingKey,
+        firstSeenAt: t0,
+      });
+
+      const recovery = yield* ThreadRecoveryService;
+      const outcome: RecoveryOutcome = yield* recovery.recover({ threadId, cwd });
+
+      assert.equal(outcome._tag, "resumed");
+      if (outcome._tag === "resumed") {
+        assert.equal(outcome.step, "session-key");
+        assert.equal(outcome.sessionKey, storedKey);
+        assert.equal(outcome.filePath, storedPath);
+      }
+    }).pipe(Effect.provide(makeRecoveryLayer({ claudeHome: stalenessEqualMtimeHome }))),
+);
+
 const staleScanHome = makeClaudeHome();
 it.live("ThreadRecovery skips filesystem scans outside the freshness window", () =>
   Effect.gen(function* () {
