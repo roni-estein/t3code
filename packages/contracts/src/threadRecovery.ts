@@ -34,16 +34,67 @@ export const RecoveryStep = Schema.Literals([
 export type RecoveryStep = typeof RecoveryStep.Type;
 
 /**
+ * RecoveryForceMode - Optional override that skips the upper rungs of
+ * the waterfall and jumps straight to a specific step.
+ *
+ * - `"db-replay"`: skip steps 1-4 and return `replay-with-transcript`
+ *   directly. Used by the `/rehydrate-thread` command when the user
+ *   knows the JSONL chain is broken and wants to force a rebuild from
+ *   the projection even if an on-disk session happens to resolve.
+ *
+ * Other force modes (e.g. `"scan-current-cwd"`) are intentionally not
+ * supported yet — adding one without a user-facing need just expands
+ * the surface area.
+ */
+export const RecoveryForceMode = Schema.Literal("db-replay");
+export type RecoveryForceMode = typeof RecoveryForceMode.Type;
+
+/**
  * RecoverInput - Payload for `threadRecovery.recover`.
  *
  * `cwd` is the workspace root the thread is running in. The server
  * encodes it into `~/.claude/projects/<cwd-encoded>/` for scanning.
+ *
+ * `force` is optional; see `RecoveryForceMode` for semantics.
  */
 export const RecoverInput = Schema.Struct({
   threadId: ThreadId,
   cwd: Schema.String,
+  force: Schema.optional(RecoveryForceMode),
 });
 export type RecoverInput = typeof RecoverInput.Type;
+
+/**
+ * RehydrateInput - Payload for `threadRecovery.rehydrate`.
+ *
+ * Flags the thread so that the next spawn of its Claude session forces
+ * a db-replay recovery, causing the recovered transcript to be injected
+ * into the first user prompt. The RPC returns quickly; the heavy work
+ * happens on the user's next turn.
+ */
+export const RehydrateInput = Schema.Struct({
+  threadId: ThreadId,
+});
+export type RehydrateInput = typeof RehydrateInput.Type;
+
+/**
+ * RehydrateOutcome - Result of the rehydrate RPC.
+ *
+ * - `scheduled`: the flag was set; next turn will rebuild.
+ * - `thread-missing`: the thread id is unknown (shouldn't happen in
+ *   normal flows since the UI always passes the active thread).
+ */
+const RehydrateOutcomeScheduled = Schema.TaggedStruct("scheduled", {
+  threadId: ThreadId,
+});
+const RehydrateOutcomeThreadMissing = Schema.TaggedStruct("thread-missing", {
+  threadId: ThreadId,
+});
+export const RehydrateOutcome = Schema.Union([
+  RehydrateOutcomeScheduled,
+  RehydrateOutcomeThreadMissing,
+]);
+export type RehydrateOutcome = typeof RehydrateOutcome.Type;
 
 const RecoveryOutcomeResumed = Schema.TaggedStruct("resumed", {
   step: RecoveryStep,
@@ -277,4 +328,5 @@ export const THREAD_RECOVERY_WS_METHODS = {
   debugBreak: "threadRecovery.debugBreak",
   diagnose: "threadRecovery.diagnose",
   reconcile: "threadRecovery.reconcile",
+  rehydrate: "threadRecovery.rehydrate",
 } as const;

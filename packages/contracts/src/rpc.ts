@@ -74,6 +74,8 @@ import {
   ReconcileOutcome,
   RecoverInput,
   RecoveryProgressEvent,
+  RehydrateInput,
+  RehydrateOutcome,
   SessionDiagnosticReport,
   SessionReconciliationRpcError,
   THREAD_RECOVERY_WS_METHODS,
@@ -413,6 +415,23 @@ export const WsThreadRecoveryReconcileRpc = Rpc.make(THREAD_RECOVERY_WS_METHODS.
   error: SessionReconciliationRpcError,
 });
 
+/**
+ * Thread recovery rehydrate - flag a thread for forced db-replay on
+ * next spawn.
+ *
+ * The RPC sets an in-memory marker on the server; the next time the
+ * Claude adapter spawns a session for this thread, it bypasses the
+ * first four steps of the waterfall and jumps straight to db-replay,
+ * which produces a transcript that is injected as the first user
+ * prompt. Wired to the `/rehydrate-thread [<uuid>]` slash command for
+ * users whose JSONL chain is broken so automatic recovery can't help.
+ */
+export const WsThreadRecoveryRehydrateRpc = Rpc.make(THREAD_RECOVERY_WS_METHODS.rehydrate, {
+  payload: RehydrateInput,
+  success: RehydrateOutcome,
+  error: ThreadRecoveryRpcError,
+});
+
 export const WsSubscribeTerminalEventsRpc = Rpc.make(WS_METHODS.subscribeTerminalEvents, {
   payload: Schema.Struct({}),
   success: TerminalEvent,
@@ -481,4 +500,5 @@ export const WsRpcGroup = RpcGroup.make(
   WsThreadRecoveryDebugBreakRpc,
   WsThreadRecoveryDiagnoseRpc,
   WsThreadRecoveryReconcileRpc,
+  WsThreadRecoveryRehydrateRpc,
 );
