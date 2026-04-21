@@ -9,6 +9,7 @@ import {
 } from "../../orchestration/Services/OrchestrationEngine.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import { ProjectionProjectHistoryRepositoryLive } from "../../persistence/Layers/ProjectionProjectHistory.ts";
+import { ProjectionProjectHistorySessionsRepositoryLive } from "../../persistence/Layers/ProjectionProjectHistorySessions.ts";
 import { ProviderSessionRuntimeRepositoryLive } from "../../persistence/Layers/ProviderSessionRuntime.ts";
 import { ProviderSessionRuntimeRepository } from "../../persistence/Services/ProviderSessionRuntime.ts";
 import { ProviderValidationError } from "../Errors.ts";
@@ -158,9 +159,12 @@ describe("ProviderSessionReaper", () => {
     const projectHistoryRepositoryLayer = ProjectionProjectHistoryRepositoryLive.pipe(
       Layer.provide(SqlitePersistenceMemory),
     );
+    const projectHistorySessionsRepositoryLayer =
+      ProjectionProjectHistorySessionsRepositoryLive.pipe(Layer.provide(SqlitePersistenceMemory));
     const providerSessionDirectoryLayer = ProviderSessionDirectoryLive.pipe(
       Layer.provide(runtimeRepositoryLayer),
       Layer.provide(projectHistoryRepositoryLayer),
+      Layer.provide(projectHistorySessionsRepositoryLayer),
     );
     const layer = makeProviderSessionReaperLive({
       inactivityThresholdMs: 1_000,

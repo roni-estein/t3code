@@ -2,6 +2,7 @@ import { IsoDateTime, type ProviderKind, type ThreadId } from "@t3tools/contract
 import { Effect, Layer, Option } from "effect";
 
 import { ProjectionProjectHistoryRepository } from "../../persistence/Services/ProjectionProjectHistory.ts";
+import { ProjectionProjectHistorySessionsRepository } from "../../persistence/Services/ProjectionProjectHistorySessions.ts";
 import type { ProviderSessionRuntime } from "../../persistence/Services/ProviderSessionRuntime.ts";
 import { ProviderSessionRuntimeRepository } from "../../persistence/Services/ProviderSessionRuntime.ts";
 import { ProviderSessionDirectoryPersistenceError, ProviderValidationError } from "../Errors.ts";
@@ -97,6 +98,7 @@ function toRuntimeBinding(
 const makeProviderSessionDirectory = Effect.gen(function* () {
   const repository = yield* ProviderSessionRuntimeRepository;
   const projectHistoryRepository = yield* ProjectionProjectHistoryRepository;
+  const projectHistorySessionsRepository = yield* ProjectionProjectHistorySessionsRepository;
 
   const getBinding = (threadId: ThreadId) =>
     repository.getByThreadId({ threadId }).pipe(
@@ -157,10 +159,11 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
     // rationale. This is an UPDATE-only call — if the thread.created
     // event has not yet been projected, it no-ops; the next imperative
     // upsert (every turn writes one) will populate the row.
+    const resolvedSessionKey = readResumeKey(resolvedResumeCursor);
     yield* projectHistoryRepository
       .updateSessionKey({
         threadId: resolvedThreadId,
-        sessionKey: readResumeKey(resolvedResumeCursor),
+        sessionKey: resolvedSessionKey,
         updatedAt: IsoDateTime.make(now),
       })
       .pipe(
@@ -168,6 +171,31 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
           toPersistenceError("ProviderSessionDirectory.upsert:projectHistorySessionKeySync"),
         ),
       );
+
+    // Also append to the session-history sibling table so
+    // ThreadRecovery's cwd-scan steps can answer "is this JSONL owned
+    // by another thread?" and so the /compact timeline is preserved.
+    // See migration 029. `recordSession` is idempotent on
+    // (thread, session_key) and atomically supersedes the prior
+    // current row when the key advances.
+    //
+    // Codex-style cursors with no `.resume` field yield a null key
+    // above; skip the sibling write in that case (we never store null
+    // keys, and clearing a Codex thread should not affect Claude
+    // session lineage).
+    if (resolvedSessionKey !== null) {
+      yield* projectHistorySessionsRepository
+        .recordSession({
+          threadId: resolvedThreadId,
+          sessionKey: resolvedSessionKey,
+          firstSeenAt: IsoDateTime.make(now),
+        })
+        .pipe(
+          Effect.mapError(
+            toPersistenceError("ProviderSessionDirectory.upsert:projectHistorySessionsSync"),
+          ),
+        );
+    }
   });
 
   const getProvider: ProviderSessionDirectoryShape["getProvider"] = (threadId) =>

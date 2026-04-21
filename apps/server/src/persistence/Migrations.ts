@@ -41,6 +41,7 @@ import Migration0025 from "./Migrations/025_CleanupInvalidProjectionPendingAppro
 import Migration0026 from "./Migrations/026_ClaudeSessionBlobs.ts";
 import Migration0027 from "./Migrations/027_ProjectHistory.ts";
 import Migration0028 from "./Migrations/028_DropClaudeSessionBlobs.ts";
+import Migration0029 from "./Migrations/029_ProjectHistorySessions.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -81,6 +82,7 @@ export const migrationEntries = [
   [26, "ClaudeSessionBlobs", Migration0026],
   [27, "ProjectHistory", Migration0027],
   [28, "DropClaudeSessionBlobs", Migration0028],
+  [29, "ProjectHistorySessions", Migration0029],
 ] as const;
 
 export const makeMigrationLoader = (throughId?: number) =>
