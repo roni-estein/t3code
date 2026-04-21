@@ -27,6 +27,7 @@ import { Open } from "./open.ts";
 import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import { OrchestrationReactor } from "./orchestration/Services/OrchestrationReactor.ts";
+import { SessionReconciliationService } from "./orchestration/Services/SessionReconciliation.ts";
 import { ServerLifecycleEvents } from "./serverLifecycleEvents.ts";
 import { ServerSettingsService } from "./serverSettings.ts";
 import { ServerEnvironment } from "./environment/Services/ServerEnvironment.ts";
@@ -287,6 +288,8 @@ export const makeServerRuntimeStartup = Effect.gen(function* () {
   const serverSettings = yield* ServerSettingsService;
   const serverEnvironment = yield* ServerEnvironment;
 
+  const sessionReconciliation = yield* SessionReconciliationService;
+
   const commandGate = yield* makeCommandGate;
   const httpListening = yield* Deferred.make<void>();
   const reactorScope = yield* Scope.make("sequential");
@@ -331,6 +334,25 @@ export const makeServerRuntimeStartup = Effect.gen(function* () {
         yield* orchestrationReactor.start().pipe(Scope.provide(reactorScope));
         yield* providerSessionReaper.start().pipe(Scope.provide(reactorScope));
       }),
+    );
+
+    // Phase-1 session projection reconciliation: heal any
+    // `projection_thread_sessions.status='running'` rows that outlived
+    // the previous process. The sweep dispatches synthetic
+    // `thread.session.set` events for stuck rows before WS clients are
+    // allowed to connect, so the UI never shows a zombie "Working" pill
+    // on first load. Failures here are logged and swallowed — an error
+    // in reconciliation should not block the server from starting.
+    yield* Effect.logDebug("startup phase: reconciling stuck thread sessions");
+    yield* runStartupPhase(
+      "session.reconcile",
+      sessionReconciliation.reconcileStartupSweep().pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("session reconciliation sweep failed at startup", {
+            cause,
+          }),
+        ),
+      ),
     );
 
     const welcomeBase = yield* resolveWelcomeBase;

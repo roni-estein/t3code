@@ -40,6 +40,7 @@ import { ServerRuntimeStartup, ServerRuntimeStartupLive } from "./serverRuntimeS
 import { OrchestrationReactorLive } from "./orchestration/Layers/OrchestrationReactor.ts";
 import { RuntimeReceiptBusLive } from "./orchestration/Layers/RuntimeReceiptBus.ts";
 import { ProviderRuntimeIngestionLive } from "./orchestration/Layers/ProviderRuntimeIngestion.ts";
+import { SessionReconciliationLive } from "./orchestration/Layers/SessionReconciliation.ts";
 import { ProviderCommandReactorLive } from "./orchestration/Layers/ProviderCommandReactor.ts";
 import { CheckpointReactorLive } from "./orchestration/Layers/CheckpointReactor.ts";
 import { ProviderRegistryLive } from "./provider/Layers/ProviderRegistry.ts";
@@ -215,9 +216,14 @@ const AuthLayerLive = ServerAuthLive.pipe(
   Layer.provide(ServerSecretStoreLive),
 );
 
+const SessionReconciliationLayerLive = SessionReconciliationLive.pipe(
+  Layer.provide(ProviderSessionRuntimeRepositoryLive),
+);
+
 const ProviderRuntimeLayerLive = ProviderSessionReaperLive.pipe(
   Layer.provideMerge(ProviderLayerLive),
   Layer.provideMerge(ThreadRecoveryLayerLive),
+  Layer.provideMerge(SessionReconciliationLayerLive),
   Layer.provideMerge(OrchestrationLayerLive),
 );
 

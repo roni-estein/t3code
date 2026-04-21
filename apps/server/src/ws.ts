@@ -18,6 +18,7 @@ import {
   ProjectWriteFileError,
   OrchestrationReplayEventsError,
   FilesystemBrowseError,
+  SessionReconciliationRpcError,
   THREAD_RECOVERY_WS_METHODS,
   ThreadId,
   ThreadRecoveryRpcError,
@@ -45,6 +46,7 @@ import {
   observeRpcStreamEffect,
 } from "./observability/RpcInstrumentation.ts";
 import { ProviderRegistry } from "./provider/Services/ProviderRegistry.ts";
+import { SessionReconciliationService } from "./orchestration/Services/SessionReconciliation.ts";
 import { ThreadRecoveryService } from "./provider/Services/ThreadRecovery.ts";
 import { ServerLifecycleEvents } from "./serverLifecycleEvents.ts";
 import { ServerRuntimeStartup } from "./serverRuntimeStartup.ts";
@@ -145,6 +147,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
       const terminalManager = yield* TerminalManager;
       const providerRegistry = yield* ProviderRegistry;
       const threadRecovery = yield* ThreadRecoveryService;
+      const sessionReconciliation = yield* SessionReconciliationService;
       const config = yield* ServerConfig;
       const lifecycleEvents = yield* ServerLifecycleEvents;
       const serverSettings = yield* ServerSettingsService;
@@ -1075,6 +1078,34 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                   new ThreadRecoveryRpcError({
                     message: cause.message ?? "Failed to break thread recovery state",
                     attemptedSteps: [],
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "threadRecovery" },
+          ),
+        [THREAD_RECOVERY_WS_METHODS.diagnose]: (input) =>
+          observeRpcEffect(
+            THREAD_RECOVERY_WS_METHODS.diagnose,
+            sessionReconciliation.diagnose(input.threadId).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new SessionReconciliationRpcError({
+                    message: cause.message ?? "Failed to diagnose thread",
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "threadRecovery" },
+          ),
+        [THREAD_RECOVERY_WS_METHODS.reconcile]: (input) =>
+          observeRpcEffect(
+            THREAD_RECOVERY_WS_METHODS.reconcile,
+            sessionReconciliation.reconcileThread(input.threadId).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new SessionReconciliationRpcError({
+                    message: cause.message ?? "Failed to reconcile thread",
                     cause,
                   }),
               ),

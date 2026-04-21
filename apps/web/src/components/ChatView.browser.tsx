@@ -215,6 +215,7 @@ function createMockEnvironmentApi(input: {
       subscribeThread: (() => () =>
         undefined) as EnvironmentApi["orchestration"]["subscribeThread"],
     },
+    threadRecovery: {} as EnvironmentApi["threadRecovery"],
   };
 }
 

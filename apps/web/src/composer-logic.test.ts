@@ -438,32 +438,98 @@ describe("deriveImageFilenameFromUrl", () => {
 
 describe("parseStandaloneComposerSlashCommand", () => {
   it("parses standalone /plan command", () => {
-    expect(parseStandaloneComposerSlashCommand(" /plan ")).toBe("plan");
+    expect(parseStandaloneComposerSlashCommand(" /plan ")).toEqual({
+      command: "plan",
+      threadId: null,
+    });
   });
 
   it("parses standalone /default command", () => {
-    expect(parseStandaloneComposerSlashCommand("/default")).toBe("default");
+    expect(parseStandaloneComposerSlashCommand("/default")).toEqual({
+      command: "default",
+      threadId: null,
+    });
   });
 
   it("parses standalone /recover-thread command", () => {
-    expect(parseStandaloneComposerSlashCommand("/recover-thread")).toBe("recover-thread");
+    expect(parseStandaloneComposerSlashCommand("/recover-thread")).toEqual({
+      command: "recover-thread",
+      threadId: null,
+    });
   });
 
   it("parses standalone /recover-thread with surrounding whitespace", () => {
-    expect(parseStandaloneComposerSlashCommand("  /recover-thread  ")).toBe("recover-thread");
+    expect(parseStandaloneComposerSlashCommand("  /recover-thread  ")).toEqual({
+      command: "recover-thread",
+      threadId: null,
+    });
   });
 
   it("parses standalone /debug-break-thread command", () => {
-    expect(parseStandaloneComposerSlashCommand("/debug-break-thread")).toBe("debug-break-thread");
+    expect(parseStandaloneComposerSlashCommand("/debug-break-thread")).toEqual({
+      command: "debug-break-thread",
+      threadId: null,
+    });
+  });
+
+  it("parses standalone /diagnose-thread command", () => {
+    expect(parseStandaloneComposerSlashCommand("/diagnose-thread")).toEqual({
+      command: "diagnose-thread",
+      threadId: null,
+    });
+  });
+
+  it("parses standalone /reconcile-thread command", () => {
+    expect(parseStandaloneComposerSlashCommand("/reconcile-thread")).toEqual({
+      command: "reconcile-thread",
+      threadId: null,
+    });
+  });
+
+  it("parses /recover-thread with a uuid argument", () => {
+    expect(
+      parseStandaloneComposerSlashCommand("/recover-thread 450c6cc7-84fe-4deb-9e40-03ed870b67c1"),
+    ).toEqual({
+      command: "recover-thread",
+      threadId: "450c6cc7-84fe-4deb-9e40-03ed870b67c1",
+    });
+  });
+
+  it("parses /diagnose-thread with a uuid argument", () => {
+    expect(
+      parseStandaloneComposerSlashCommand("/diagnose-thread 450C6CC7-84FE-4DEB-9E40-03ED870B67C1"),
+    ).toEqual({
+      command: "diagnose-thread",
+      threadId: "450c6cc7-84fe-4deb-9e40-03ed870b67c1",
+    });
+  });
+
+  it("parses /reconcile-thread with a uuid argument", () => {
+    expect(
+      parseStandaloneComposerSlashCommand(
+        "/reconcile-thread  450c6cc7-84fe-4deb-9e40-03ed870b67c1  ",
+      ),
+    ).toEqual({
+      command: "reconcile-thread",
+      threadId: "450c6cc7-84fe-4deb-9e40-03ed870b67c1",
+    });
   });
 
   it("is case-insensitive", () => {
-    expect(parseStandaloneComposerSlashCommand("/RECOVER-THREAD")).toBe("recover-thread");
+    expect(parseStandaloneComposerSlashCommand("/RECOVER-THREAD")).toEqual({
+      command: "recover-thread",
+      threadId: null,
+    });
   });
 
   it("ignores slash commands with extra message text", () => {
     expect(parseStandaloneComposerSlashCommand("/plan explain this")).toBeNull();
     expect(parseStandaloneComposerSlashCommand("/recover-thread now")).toBeNull();
+  });
+
+  it("rejects non-uuid args for thread commands", () => {
+    expect(parseStandaloneComposerSlashCommand("/recover-thread bogus")).toBeNull();
+    expect(parseStandaloneComposerSlashCommand("/diagnose-thread 12345")).toBeNull();
   });
 
   it("ignores unknown slash commands", () => {

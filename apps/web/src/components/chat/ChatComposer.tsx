@@ -445,7 +445,9 @@ export interface ChatComposerProps {
 
   /**
    * Invoked when the user selects `/recover-thread` from the slash-command
-   * menu. The parent owns the RecoveryProgressOverlay dialog state.
+   * menu. The parent owns the RecoveryProgressOverlay dialog state. The
+   * menu path never supplies a thread override — that only comes from
+   * the `/recover-thread <uuid>` standalone parser in `ChatView`.
    */
   handleTriggerThreadRecovery: () => void;
   /**
@@ -453,6 +455,16 @@ export interface ChatComposerProps {
    * `threadRecovery.debugBreak` RPC + surfaces a confirmation toast.
    */
   handleDebugBreakThread: () => void;
+  /**
+   * Invoked when the user selects `/diagnose-thread`. Parent fetches
+   * the divergence report and surfaces it in a toast.
+   */
+  handleDiagnoseThread: () => void;
+  /**
+   * Invoked when the user selects `/reconcile-thread`. Parent calls
+   * the reconcile RPC and surfaces the outcome in a toast.
+   */
+  handleReconcileThread: () => void;
 
   focusComposer: () => void;
   scheduleComposerFocus: () => void;
@@ -525,6 +537,8 @@ export const ChatComposer = memo(
       handleInteractionModeChange,
       handleTriggerThreadRecovery,
       handleDebugBreakThread,
+      handleDiagnoseThread,
+      handleReconcileThread,
       togglePlanSidebar,
       focusComposer,
       scheduleComposerFocus,
@@ -768,6 +782,22 @@ export const ChatComposer = memo(
             command: "debug-break-thread",
             label: "/debug-break-thread",
             description: "Dev: clear saved session so the next turn exercises recovery",
+          },
+          {
+            id: "slash:diagnose-thread",
+            type: "slash-command",
+            command: "diagnose-thread",
+            label: "/diagnose-thread",
+            description:
+              "Read-only divergence report for this thread (pass <uuid> to diagnose another)",
+          },
+          {
+            id: "slash:reconcile-thread",
+            type: "slash-command",
+            command: "reconcile-thread",
+            label: "/reconcile-thread",
+            description:
+              "Heal a stuck session projection (pass <uuid> to reconcile another thread)",
           },
         ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>;
         const providerSlashCommandItems = (selectedProviderStatus?.slashCommands ?? []).map(
@@ -1430,6 +1460,12 @@ export const ChatComposer = memo(
             case "debug-break-thread":
               handleDebugBreakThread();
               break;
+            case "diagnose-thread":
+              handleDiagnoseThread();
+              break;
+            case "reconcile-thread":
+              handleReconcileThread();
+              break;
             default: {
               const _exhaustive: never = item.command;
               return _exhaustive;
@@ -1492,6 +1528,8 @@ export const ChatComposer = memo(
         handleInteractionModeChange,
         handleTriggerThreadRecovery,
         handleDebugBreakThread,
+        handleDiagnoseThread,
+        handleReconcileThread,
         onProviderModelSelect,
         resolveActiveComposerTrigger,
       ],
