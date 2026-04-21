@@ -10,6 +10,8 @@ import { ProjectionThreadMessageRepositoryLive } from "../../persistence/Layers/
 import { ProjectionThreadMessageRepository } from "../../persistence/Services/ProjectionThreadMessages.ts";
 import { ProjectionProjectHistoryRepositoryLive } from "../../persistence/Layers/ProjectionProjectHistory.ts";
 import { ProjectionProjectHistoryRepository } from "../../persistence/Services/ProjectionProjectHistory.ts";
+import { ProjectionProjectHistorySessionsRepositoryLive } from "../../persistence/Layers/ProjectionProjectHistorySessions.ts";
+import { ProjectionProjectHistorySessionsRepository } from "../../persistence/Services/ProjectionProjectHistorySessions.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import { ThreadRecoveryService, type RecoveryOutcome } from "../Services/ThreadRecovery.ts";
 import { encodeCwdForClaudeProjects } from "../sessionHealth.ts";
@@ -28,18 +30,26 @@ function makeRecoveryLayer(input: {
   const projectHistoryLayer = ProjectionProjectHistoryRepositoryLive.pipe(
     Layer.provide(SqlitePersistenceMemory),
   );
+  const projectHistorySessionsLayer = ProjectionProjectHistorySessionsRepositoryLive.pipe(
+    Layer.provide(SqlitePersistenceMemory),
+  );
   const threadMessageLayer = ProjectionThreadMessageRepositoryLive.pipe(
     Layer.provide(SqlitePersistenceMemory),
   );
   return Layer.mergeAll(
     projectHistoryLayer,
+    projectHistorySessionsLayer,
     threadMessageLayer,
     makeThreadRecoveryLive({
       claudeHome: input.claudeHome,
       ...(input.freshnessWindowMs !== undefined
         ? { freshnessWindowMs: input.freshnessWindowMs }
         : {}),
-    }).pipe(Layer.provide(projectHistoryLayer), Layer.provide(threadMessageLayer)),
+    }).pipe(
+      Layer.provide(projectHistoryLayer),
+      Layer.provide(projectHistorySessionsLayer),
+      Layer.provide(threadMessageLayer),
+    ),
   );
 }
 
@@ -284,6 +294,141 @@ it.live("ThreadRecovery step 5: returns an empty transcript for a thread with no
       assert.equal(outcome.transcript, "");
     }
   }).pipe(Effect.provide(makeRecoveryLayer({ claudeHome: emptyHome }))),
+);
+
+const ownershipRejectHome = makeClaudeHome();
+it.live(
+  "ThreadRecovery rejects JSONL candidates owned by another thread during scan-current-cwd",
+  () =>
+    Effect.gen(function* () {
+      // Two threads share the same cwd. Thread A tries to recover; the
+      // cwd dir contains a JSONL belonging to thread B. The ownership
+      // filter must reject B's JSONL and fall through to step 5
+      // (db-replay), rather than silently hand A back B's transcript.
+      const threadA = ThreadId.make("thread-collision-a");
+      const threadB = ThreadId.make("thread-collision-b");
+      const projectId = ProjectId.make("project-collision");
+      const cwd = "/tmp/collision-workspace";
+
+      const sessionA = "session-collision-a";
+      const sessionB = "session-collision-b";
+
+      // Both sessions are written to the same cwd-encoded dir. B's file
+      // gets a newer mtime so the naive scan would pick it.
+      writeSessionFile(ownershipRejectHome, cwd, sessionA);
+      const pathB = writeSessionFile(ownershipRejectHome, cwd, sessionB);
+      const futureMtime = new Date(Date.now() + 5 * 60 * 1000);
+      fs.utimesSync(pathB, futureMtime, futureMtime);
+
+      yield* seedProjectHistory({ threadId: threadA, projectId });
+
+      // Pre-seed: sessionA and sessionB both catalogued, each to their
+      // owning thread. With only A's project_history row, A's step 1
+      // and 2 will skip; step 3 finds both JSONLs but must filter out
+      // B's, then fall back because A's own JSONL in the dir has a
+      // stale mtime (well within freshness window, but not the newest).
+      // For simplicity we also catalog A's session so A's file would be
+      // accepted if reached — the assertion below is just that A's
+      // scan outcome was NOT B's file.
+      const sessionsRepo = yield* ProjectionProjectHistorySessionsRepository;
+      const t0 = IsoDateTime.make(new Date().toISOString());
+      yield* sessionsRepo.recordSession({
+        threadId: threadA,
+        sessionKey: sessionA,
+        firstSeenAt: t0,
+      });
+      yield* sessionsRepo.recordSession({
+        threadId: threadB,
+        sessionKey: sessionB,
+        firstSeenAt: t0,
+      });
+
+      const recovery = yield* ThreadRecoveryService;
+      const outcome: RecoveryOutcome = yield* recovery.recover({ threadId: threadA, cwd });
+
+      // Outcome must be either A's own file (accepted after skipping B)
+      // or db-replay. It must NOT be B's file.
+      assert.notEqual(
+        outcome._tag === "resumed" ? outcome.filePath : null,
+        pathB,
+        "ThreadRecovery returned a JSONL owned by a different thread",
+      );
+      if (outcome._tag === "resumed") {
+        assert.equal(outcome.sessionKey, sessionA);
+      }
+    }).pipe(Effect.provide(makeRecoveryLayer({ claudeHome: ownershipRejectHome }))),
+);
+
+const uncataloguedAcceptHome = makeClaudeHome();
+it.live("ThreadRecovery accepts an uncatalogued JSONL in cwd and records it for this thread", () =>
+  Effect.gen(function* () {
+    const threadId = ThreadId.make("thread-uncatalogued");
+    const projectId = ProjectId.make("project-uncatalogued");
+    const cwd = "/tmp/uncatalogued-workspace";
+    const orphan = "session-uncatalogued";
+    const orphanPath = writeSessionFile(uncataloguedAcceptHome, cwd, orphan);
+
+    yield* seedProjectHistory({ threadId, projectId });
+    // Intentionally do NOT seed project_history_sessions — the
+    // session_key is unknown to the ownership filter.
+
+    const recovery = yield* ThreadRecoveryService;
+    const outcome: RecoveryOutcome = yield* recovery.recover({ threadId, cwd });
+
+    assert.equal(outcome._tag, "resumed");
+    if (outcome._tag === "resumed") {
+      assert.equal(outcome.step, "scan-current-cwd");
+      assert.equal(outcome.sessionKey, orphan);
+      assert.equal(outcome.filePath, orphanPath);
+    }
+
+    // And the successful scan should have catalogued the session_key
+    // so subsequent scans can short-circuit the ownership check.
+    const sessionsRepo = yield* ProjectionProjectHistorySessionsRepository;
+    const owner = yield* sessionsRepo.getThreadByKey({ sessionKey: orphan });
+    assert.equal(Option.isSome(owner), true);
+    if (Option.isSome(owner)) {
+      assert.equal(owner.value, threadId);
+    }
+  }).pipe(Effect.provide(makeRecoveryLayer({ claudeHome: uncataloguedAcceptHome }))),
+);
+
+const ownedSelfHome = makeClaudeHome();
+it.live(
+  "ThreadRecovery accepts a JSONL already catalogued to this thread without duplicating the row",
+  () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("thread-self-owned");
+      const projectId = ProjectId.make("project-self-owned");
+      const cwd = "/tmp/self-owned-workspace";
+      const owned = "session-self-owned";
+      const ownedPath = writeSessionFile(ownedSelfHome, cwd, owned);
+
+      yield* seedProjectHistory({ threadId, projectId });
+
+      const sessionsRepo = yield* ProjectionProjectHistorySessionsRepository;
+      const t0 = IsoDateTime.make(new Date().toISOString());
+      yield* sessionsRepo.recordSession({
+        threadId,
+        sessionKey: owned,
+        firstSeenAt: t0,
+      });
+
+      const recovery = yield* ThreadRecoveryService;
+      const outcome: RecoveryOutcome = yield* recovery.recover({ threadId, cwd });
+
+      assert.equal(outcome._tag, "resumed");
+      if (outcome._tag === "resumed") {
+        assert.equal(outcome.step, "scan-current-cwd");
+        assert.equal(outcome.filePath, ownedPath);
+      }
+
+      // Sibling table should have exactly one row for this thread —
+      // the one we pre-seeded. The scan must not have added a dupe.
+      const history = yield* sessionsRepo.listByThreadId({ threadId });
+      assert.equal(history.length, 1);
+      assert.equal(history[0]?.sessionKey, owned);
+    }).pipe(Effect.provide(makeRecoveryLayer({ claudeHome: ownedSelfHome }))),
 );
 
 const staleScanHome = makeClaudeHome();

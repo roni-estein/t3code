@@ -14,6 +14,8 @@ import {
   SqlitePersistenceMemory,
 } from "../../persistence/Layers/Sqlite.ts";
 import { ProjectionProjectHistoryRepositoryLive } from "../../persistence/Layers/ProjectionProjectHistory.ts";
+import { ProjectionProjectHistorySessionsRepositoryLive } from "../../persistence/Layers/ProjectionProjectHistorySessions.ts";
+import { ProjectionProjectHistorySessionsRepository } from "../../persistence/Services/ProjectionProjectHistorySessions.ts";
 import { ProviderSessionRuntimeRepositoryLive } from "../../persistence/Layers/ProviderSessionRuntime.ts";
 import { ProviderSessionRuntimeRepository } from "../../persistence/Services/ProviderSessionRuntime.ts";
 import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
@@ -26,11 +28,16 @@ function makeDirectoryLayer<E, R>(persistenceLayer: Layer.Layer<SqlClient.SqlCli
   const projectHistoryRepositoryLayer = ProjectionProjectHistoryRepositoryLive.pipe(
     Layer.provide(persistenceLayer),
   );
+  const projectHistorySessionsRepositoryLayer = ProjectionProjectHistorySessionsRepositoryLive.pipe(
+    Layer.provide(persistenceLayer),
+  );
   return Layer.mergeAll(
     runtimeRepositoryLayer,
+    projectHistorySessionsRepositoryLayer,
     ProviderSessionDirectoryLive.pipe(
       Layer.provide(runtimeRepositoryLayer),
       Layer.provide(projectHistoryRepositoryLayer),
+      Layer.provide(projectHistorySessionsRepositoryLayer),
     ),
     NodeServices.layer,
   );
@@ -271,5 +278,78 @@ it.layer(makeDirectoryLayer(SqlitePersistenceMemory))("ProviderSessionDirectoryL
       }).pipe(Effect.provide(directoryLayer));
 
       fs.rmSync(tempDir, { recursive: true, force: true });
+    }));
+
+  it("records a new row in project_history_sessions when resume key advances", () =>
+    Effect.gen(function* () {
+      const directory = yield* ProviderSessionDirectory;
+      const sessionsRepo = yield* ProjectionProjectHistorySessionsRepository;
+      const threadId = ThreadId.make("thread-history-advance");
+
+      // First upsert with a Claude CLI resume key.
+      yield* directory.upsert({
+        provider: "claudeAgent",
+        threadId,
+        resumeCursor: {
+          threadId: "provider-thread-history-advance",
+          resume: "session-history-1",
+        },
+      });
+
+      let history = yield* sessionsRepo.listByThreadId({ threadId });
+      assert.equal(history.length, 1);
+      assert.equal(history[0]?.sessionKey, "session-history-1");
+      assert.equal(history[0]?.supersededAt, null);
+
+      // Second upsert with a NEW resume key → prior row should be
+      // superseded and the new row should be current.
+      yield* directory.upsert({
+        provider: "claudeAgent",
+        threadId,
+        resumeCursor: {
+          threadId: "provider-thread-history-advance",
+          resume: "session-history-2",
+        },
+      });
+
+      history = yield* sessionsRepo.listByThreadId({ threadId });
+      assert.equal(history.length, 2);
+      const first = history.find((r) => r.sessionKey === "session-history-1");
+      const second = history.find((r) => r.sessionKey === "session-history-2");
+      assert.ok(first);
+      assert.ok(second);
+      // The previous current row now has a supersededAt timestamp.
+      assert.notEqual(first?.supersededAt, null);
+      assert.equal(second?.supersededAt, null);
+
+      const current = yield* sessionsRepo.getCurrentByThreadId({ threadId });
+      assert.equal(Option.isSome(current), true);
+      if (Option.isSome(current)) {
+        assert.equal(current.value.sessionKey, "session-history-2");
+      }
+    }));
+
+  it("does NOT record a sessions row when the resume cursor lacks a resume field", () =>
+    Effect.gen(function* () {
+      const directory = yield* ProviderSessionDirectory;
+      const sessionsRepo = yield* ProjectionProjectHistorySessionsRepository;
+      const threadId = ThreadId.make("thread-history-codex");
+
+      // Codex-style cursor: carries threadId but no .resume field.
+      // Writing a null key to project_history_sessions would corrupt
+      // the schema (session_key is NOT NULL) — the sync must skip.
+      yield* directory.upsert({
+        provider: "codex",
+        threadId,
+        resumeCursor: {
+          threadId: "codex-thread-provider-id",
+        },
+      });
+
+      const history = yield* sessionsRepo.listByThreadId({ threadId });
+      assert.equal(history.length, 0);
+
+      const current = yield* sessionsRepo.getCurrentByThreadId({ threadId });
+      assert.equal(Option.isNone(current), true);
     }));
 });
