@@ -4,6 +4,7 @@ import {
   AuthSessionId,
   CommandId,
   EventId,
+  MessageId,
   type OrchestrationCommand,
   type GitActionProgressEvent,
   type GitManagerServiceError,
@@ -1115,18 +1116,63 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
         [THREAD_RECOVERY_WS_METHODS.rehydrate]: (input) =>
           observeRpcEffect(
             THREAD_RECOVERY_WS_METHODS.rehydrate,
-            threadRecovery.scheduleRehydrate(input.threadId).pipe(
-              Effect.map(
-                () =>
-                  ({ _tag: "scheduled" as const, threadId: input.threadId }) satisfies {
-                    readonly _tag: "scheduled";
-                    readonly threadId: typeof input.threadId;
-                  },
-              ),
+            Effect.gen(function* () {
+              // PR 7: post a "rehydration-staged" system message into the
+              // timeline so the user sees confirmation without relying on
+              // the (since-removed) toast. The flag-based activation path
+              // (PR 6) is unchanged — the next real user turn still
+              // consumes `pendingForceRehydrate` and injects the
+              // transcript. We deliberately do NOT auto-kick a synthetic
+              // turn here: dispatching a `thread.turn.start` from a
+              // server-internal caller would require assembling the full
+              // client-shaped command payload (modelSelection, runtime
+              // mode, attachments, title seed) from the read model and
+              // would cross a significant layering boundary — out of
+              // scope for this PR. See the final report's "synthetic-turn
+              // auto-kick" note.
+              yield* threadRecovery.scheduleRehydrate(input.threadId);
+
+              const now = new Date().toISOString();
+              const commandId = serverCommandId("rehydrate-staged-system-message");
+              const messageId = MessageId.make(
+                `system:rehydrate:staged:${input.threadId}:${crypto.randomUUID()}`,
+              );
+              yield* orchestrationEngine
+                .dispatch({
+                  type: "thread.message.system.post",
+                  commandId,
+                  threadId: input.threadId,
+                  messageId,
+                  text: "Context rehydration scheduled. Your next message will rebuild context from this thread's history.",
+                  createdAt: now,
+                })
+                .pipe(
+                  // Banner is best-effort: if the thread row is missing
+                  // or the projector rejects the command, we still
+                  // return `scheduled` so the flag path is preserved.
+                  Effect.catch((cause) =>
+                    Effect.logWarning("threadRecovery.rehydrate: failed to post staged banner").pipe(
+                      Effect.annotateLogs({
+                        threadId: input.threadId,
+                        cause: cause.message,
+                      }),
+                    ),
+                  ),
+                );
+
+              return {
+                _tag: "scheduled" as const,
+                threadId: input.threadId,
+              } satisfies {
+                readonly _tag: "scheduled";
+                readonly threadId: typeof input.threadId;
+              };
+            }).pipe(
               Effect.mapError(
                 (cause) =>
                   new ThreadRecoveryRpcError({
-                    message: cause.message ?? "Failed to schedule rehydrate",
+                    message:
+                      cause instanceof Error ? cause.message : "Failed to schedule rehydrate",
                     attemptedSteps: [],
                     cause,
                   }),
