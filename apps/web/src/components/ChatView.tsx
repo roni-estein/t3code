@@ -2152,24 +2152,22 @@ export default function ChatView(props: ChatViewProps) {
         });
         return;
       }
+      // PR 7: removed the success-path toast. The server now posts a
+      // system-role "Context rehydration scheduled" message into the
+      // timeline (rendered as a banner by `MessagesTimeline.tsx`), which
+      // communicates the outcome in-context without a popup that
+      // confusingly said "will be ready after next message". The
+      // `thread-missing` / error branches still toast because there is
+      // no timeline entry to surface those.
       void api.threadRecovery
         .rehydrate({ threadId: targetId })
         .then((outcome) => {
-          switch (outcome._tag) {
-            case "scheduled":
-              toastManager.add({
-                type: "info",
-                title: "Thread rehydrate scheduled",
-                description: "Next turn will rebuild context from thread history.",
-              });
-              break;
-            case "thread-missing":
-              toastManager.add({
-                type: "warning",
-                title: "Unknown thread",
-                description: `No thread found for ${outcome.threadId}.`,
-              });
-              break;
+          if (outcome._tag === "thread-missing") {
+            toastManager.add({
+              type: "warning",
+              title: "Unknown thread",
+              description: `No thread found for ${outcome.threadId}.`,
+            });
           }
         })
         .catch((error: unknown) => {
