@@ -1544,135 +1544,267 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
-  it.effect("emits Claude context window on result completion usage snapshots", () => {
-    const harness = makeHarness();
-    return Effect.gen(function* () {
-      const adapter = yield* ClaudeAdapter;
+  it.effect(
+    "does not emit usedTokens from cumulative Claude result usage without intra-turn capture",
+    () => {
+      // Regression guard for PR 8 / task #532. The SDK's `result.usage`
+      // represents the *cumulative* sum of `input_tokens +
+      // cache_creation_input_tokens + cache_read_input_tokens` across every
+      // API call in the turn. Feeding that into `usedTokens` (clamped to
+      // `maxTokens`) produced a phantom "context window 100% full" reading
+      // on any tool-heavy turn without sub-agent work. We now suppress the
+      // token-usage event entirely when no intra-turn per-call snapshot has
+      // been captured.
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
 
-      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 7).pipe(
-        Stream.runCollect,
-        Effect.forkChild,
-      );
+        const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 6).pipe(
+          Stream.runCollect,
+          Effect.forkChild,
+        );
 
-      yield* adapter.startSession({
-        threadId: THREAD_ID,
-        provider: "claudeAgent",
-        runtimeMode: "full-access",
-      });
-
-      yield* adapter.sendTurn({
-        threadId: THREAD_ID,
-        input: "hello",
-        attachments: [],
-      });
-
-      harness.query.emit({
-        type: "result",
-        subtype: "success",
-        is_error: false,
-        duration_ms: 1234,
-        duration_api_ms: 1200,
-        num_turns: 1,
-        result: "done",
-        stop_reason: "end_turn",
-        session_id: "sdk-session-result-usage",
-        usage: {
-          input_tokens: 4,
-          cache_creation_input_tokens: 2715,
-          cache_read_input_tokens: 21144,
-          output_tokens: 679,
-        },
-        modelUsage: {
-          "claude-opus-4-6": {
-            contextWindow: 200000,
-            maxOutputTokens: 64000,
-          },
-        },
-      } as unknown as SDKMessage);
-      harness.query.finish();
-
-      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
-      const usageEvent = runtimeEvents.find((event) => event.type === "thread.token-usage.updated");
-      assert.equal(usageEvent?.type, "thread.token-usage.updated");
-      if (usageEvent?.type === "thread.token-usage.updated") {
-        assert.deepEqual(usageEvent.payload, {
-          usage: {
-            usedTokens: 24542,
-            lastUsedTokens: 24542,
-            inputTokens: 23863,
-            outputTokens: 679,
-            maxTokens: 200000,
-          },
+        yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: "claudeAgent",
+          runtimeMode: "full-access",
         });
-      }
-    }).pipe(
-      Effect.provideService(Random.Random, makeDeterministicRandomService()),
-      Effect.provide(harness.layer),
-    );
-  });
 
-  it.effect("clamps oversized Claude usage to the reported context window", () => {
-    const harness = makeHarness();
-    return Effect.gen(function* () {
-      const adapter = yield* ClaudeAdapter;
-
-      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 7).pipe(
-        Stream.runCollect,
-        Effect.forkChild,
-      );
-
-      yield* adapter.startSession({
-        threadId: THREAD_ID,
-        provider: "claudeAgent",
-        runtimeMode: "full-access",
-      });
-
-      yield* adapter.sendTurn({
-        threadId: THREAD_ID,
-        input: "hello",
-        attachments: [],
-      });
-
-      harness.query.emit({
-        type: "result",
-        subtype: "success",
-        is_error: false,
-        duration_ms: 1234,
-        duration_api_ms: 1200,
-        num_turns: 1,
-        result: "done",
-        stop_reason: "end_turn",
-        session_id: "sdk-session-result-usage-clamped",
-        usage: {
-          total_tokens: 535000,
-        },
-        modelUsage: {
-          "claude-opus-4-6": {
-            contextWindow: 200000,
-            maxOutputTokens: 64000,
-          },
-        },
-      } as unknown as SDKMessage);
-      harness.query.finish();
-
-      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
-      const usageEvent = runtimeEvents.find((event) => event.type === "thread.token-usage.updated");
-      assert.equal(usageEvent?.type, "thread.token-usage.updated");
-      if (usageEvent?.type === "thread.token-usage.updated") {
-        assert.deepEqual(usageEvent.payload, {
-          usage: {
-            usedTokens: 200000,
-            lastUsedTokens: 200000,
-            totalProcessedTokens: 535000,
-            maxTokens: 200000,
-          },
+        yield* adapter.sendTurn({
+          threadId: THREAD_ID,
+          input: "hello",
+          attachments: [],
         });
-      }
-    }).pipe(
-      Effect.provideService(Random.Random, makeDeterministicRandomService()),
-      Effect.provide(harness.layer),
-    );
-  });
+
+        harness.query.emit({
+          type: "result",
+          subtype: "success",
+          is_error: false,
+          duration_ms: 1234,
+          duration_api_ms: 1200,
+          num_turns: 1,
+          result: "done",
+          stop_reason: "end_turn",
+          session_id: "sdk-session-result-usage",
+          usage: {
+            input_tokens: 4,
+            cache_creation_input_tokens: 2715,
+            cache_read_input_tokens: 21144,
+            output_tokens: 679,
+          },
+          modelUsage: {
+            "claude-opus-4-6": {
+              contextWindow: 200000,
+              maxOutputTokens: 64000,
+            },
+          },
+        } as unknown as SDKMessage);
+        harness.query.finish();
+
+        const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+        const usageEvents = runtimeEvents.filter(
+          (event) => event.type === "thread.token-usage.updated",
+        );
+        assert.equal(
+          usageEvents.length,
+          0,
+          "expected no thread.token-usage.updated event when intra-turn usage was never captured",
+        );
+
+        const turnCompletedEvent = runtimeEvents.find((event) => event.type === "turn.completed");
+        assert.equal(turnCompletedEvent?.type, "turn.completed");
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    },
+  );
+
+  it.effect(
+    "suppresses usedTokens when cumulative result usage would exceed the reported context window",
+    () => {
+      // Regression guard for PR 8 / task #532. The "clamp to maxTokens"
+      // behavior that this test used to assert was itself the bug source —
+      // a cumulative `total_tokens=535k` against a 200k window produced a
+      // bogus `usedTokens: 200000` phantom-full reading. Without an
+      // intra-turn per-call capture we must emit no `usedTokens` at all.
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+
+        const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 6).pipe(
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+
+        yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: "claudeAgent",
+          runtimeMode: "full-access",
+        });
+
+        yield* adapter.sendTurn({
+          threadId: THREAD_ID,
+          input: "hello",
+          attachments: [],
+        });
+
+        harness.query.emit({
+          type: "result",
+          subtype: "success",
+          is_error: false,
+          duration_ms: 1234,
+          duration_api_ms: 1200,
+          num_turns: 1,
+          result: "done",
+          stop_reason: "end_turn",
+          session_id: "sdk-session-result-usage-clamped",
+          usage: {
+            total_tokens: 535000,
+          },
+          modelUsage: {
+            "claude-opus-4-6": {
+              contextWindow: 200000,
+              maxOutputTokens: 64000,
+            },
+          },
+        } as unknown as SDKMessage);
+        harness.query.finish();
+
+        const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+        const usageEvents = runtimeEvents.filter(
+          (event) => event.type === "thread.token-usage.updated",
+        );
+        assert.equal(
+          usageEvents.length,
+          0,
+          "expected no thread.token-usage.updated event when only cumulative usage is known",
+        );
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    },
+  );
+
+  it.effect(
+    "captures usedTokens from per-call assistant message usage even without sub-agent events",
+    () => {
+      // PR 8 / task #532 — Option A. On turns without sub-agent
+      // task_progress events, we must still keep `lastKnownTokenUsage`
+      // fresh so the turn-complete emitter has an honest per-API-call
+      // snapshot. `SDKAssistantMessage.message.usage` is per-response
+      // BetaUsage, which IS the right shape for a context-window reading.
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+
+        const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 12).pipe(
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+
+        yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: "claudeAgent",
+          runtimeMode: "full-access",
+        });
+
+        yield* adapter.sendTurn({
+          threadId: THREAD_ID,
+          input: "hello",
+          attachments: [],
+        });
+
+        // First API call: input+cache totals are small.
+        harness.query.emit({
+          type: "assistant",
+          session_id: "sdk-session-assistant-usage-1",
+          uuid: "assistant-usage-1",
+          parent_tool_use_id: null,
+          message: {
+            id: "assistant-message-usage-1",
+            content: [{ type: "text", text: "mid-turn" }],
+            usage: {
+              input_tokens: 100,
+              cache_creation_input_tokens: 200,
+              cache_read_input_tokens: 10_000,
+              output_tokens: 50,
+            },
+          },
+        } as unknown as SDKMessage);
+
+        // Second API call: per-call total is still well under the 200k cap.
+        // This is the per-call context size we want preserved — NOT the
+        // cumulative `result.usage` that the SDK eventually ships.
+        harness.query.emit({
+          type: "assistant",
+          session_id: "sdk-session-assistant-usage-2",
+          uuid: "assistant-usage-2",
+          parent_tool_use_id: null,
+          message: {
+            id: "assistant-message-usage-2",
+            content: [{ type: "text", text: "done" }],
+            usage: {
+              input_tokens: 150,
+              cache_creation_input_tokens: 300,
+              cache_read_input_tokens: 40_000,
+              output_tokens: 75,
+            },
+          },
+        } as unknown as SDKMessage);
+
+        // The SDK `result.usage` is cumulative across the two calls above,
+        // and would phantom-clamp to 200k if we trusted it for `usedTokens`.
+        harness.query.emit({
+          type: "result",
+          subtype: "success",
+          is_error: false,
+          duration_ms: 1234,
+          duration_api_ms: 1200,
+          num_turns: 1,
+          result: "done",
+          stop_reason: "end_turn",
+          session_id: "sdk-session-result-cumulative",
+          usage: {
+            input_tokens: 250,
+            cache_creation_input_tokens: 500,
+            cache_read_input_tokens: 250_000,
+            output_tokens: 125,
+          },
+          modelUsage: {
+            "claude-opus-4-6": {
+              contextWindow: 200_000,
+              maxOutputTokens: 64_000,
+            },
+          },
+        } as unknown as SDKMessage);
+        harness.query.finish();
+
+        const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+        const usageEvents = runtimeEvents.filter(
+          (event) => event.type === "thread.token-usage.updated",
+        );
+        const finalUsageEvent = usageEvents.at(-1);
+        assert.equal(finalUsageEvent?.type, "thread.token-usage.updated");
+        if (finalUsageEvent?.type === "thread.token-usage.updated") {
+          // Reflects the LAST per-call assistant snapshot
+          // (150 + 300 + 40_000 + 75 = 40_525), not the cumulative sum.
+          assert.equal(finalUsageEvent.payload.usage.usedTokens, 40_525);
+          assert.equal(finalUsageEvent.payload.usage.lastUsedTokens, 40_525);
+          assert.equal(finalUsageEvent.payload.usage.maxTokens, 200_000);
+          assert.ok(
+            (finalUsageEvent.payload.usage.usedTokens ?? 0) <
+              (finalUsageEvent.payload.usage.maxTokens ?? 0),
+            "usedTokens must not phantom-clamp to maxTokens",
+          );
+        }
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    },
+  );
 
   it.effect(
     "preserves oversized Claude result totals after task progress snapshots are recorded",
