@@ -54,6 +54,7 @@ import {
   type RecoveryOutcome,
   type RecoveryProgressEvent,
   type RecoveryStep,
+  type ThreadId,
 } from "@t3tools/contracts";
 import { Context } from "effect";
 import type { Effect, Stream } from "effect";
@@ -126,6 +127,35 @@ export interface ThreadRecoveryShape {
    * yet, so there's nothing to break.
    */
   readonly debugBreak: (input: DebugBreakInput) => Effect.Effect<void, ThreadRecoveryServiceError>;
+
+  /**
+   * Mark a thread for forced db-replay on its next session spawn.
+   *
+   * The ClaudeAdapter checks this flag at session-spawn time; if set,
+   * it calls `recover({ force: "db-replay" })` and injects the
+   * resulting transcript into the next user prompt. The flag is
+   * cleared after it fires (one-shot semantics).
+   *
+   * Invoked by the `threadRecovery.rehydrate` RPC (wired to the
+   * `/rehydrate-thread` slash command).
+   *
+   * In-memory — restart clears the flag. That's acceptable: users can
+   * re-run the command. This sidesteps read-modify-write races on
+   * `provider_session_runtime.runtime_payload_json` and keeps the
+   * change scope-tight.
+   */
+  readonly scheduleRehydrate: (
+    threadId: ThreadId,
+  ) => Effect.Effect<void, ThreadRecoveryServiceError>;
+
+  /**
+   * Read-and-clear the rehydrate marker for a thread. Returns true if
+   * the flag was set (caller should force db-replay). Atomic at the
+   * service boundary so concurrent spawns can't both see `true`.
+   */
+  readonly consumePendingRehydrate: (
+    threadId: ThreadId,
+  ) => Effect.Effect<boolean, ThreadRecoveryServiceError>;
 }
 
 export class ThreadRecoveryService extends Context.Service<

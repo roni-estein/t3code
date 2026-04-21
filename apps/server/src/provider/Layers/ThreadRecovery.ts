@@ -241,6 +241,14 @@ const makeThreadRecovery = (options?: ThreadRecoveryLiveOptions) =>
 
     const pubsub = yield* PubSub.unbounded<RecoveryProgressEvent>();
 
+    /**
+     * Set of thread ids flagged for forced db-replay via
+     * `scheduleRehydrate`. Consumed once by `consumePendingRehydrate`.
+     * In-memory only — see `ThreadRecoveryShape.scheduleRehydrate`
+     * docstring for the rationale.
+     */
+    const pendingRehydrate = new Set<ThreadId>();
+
     const emit = (event: RecoveryProgressEvent) =>
       PubSub.publish(pubsub, event).pipe(Effect.asVoid);
 
@@ -586,6 +594,37 @@ const makeThreadRecovery = (options?: ThreadRecoveryLiveOptions) =>
         const now = Date.now();
         yield* emitStarted(input.threadId, input.cwd);
 
+        // Force-mode shortcut: skip the on-disk rungs and jump straight
+        // to db-replay. Used by `/rehydrate-thread` when the user knows
+        // the JSONL chain is broken and wants a transcript rebuild
+        // unconditionally. We still emit `step-skipped` for each
+        // bypassed rung so the progress UI shows the full waterfall.
+        if (input.force === "db-replay") {
+          for (const skipped of STEP_ORDER) {
+            if (skipped === "db-replay") break;
+            yield* emitStepSkipped(input.threadId, skipped, "forced db-replay");
+          }
+          const forcedStep5 = yield* runDbReplayStep(input);
+          if (Option.isSome(forcedStep5)) {
+            yield* emitCompleted(input.threadId, forcedStep5.value);
+            return forcedStep5.value;
+          }
+          // Shouldn't happen (db-replay always yields an outcome), but
+          // mirror the fall-through path from the normal waterfall.
+          const forcedFailure: RecoveryOutcome = {
+            _tag: "failed",
+            attemptedSteps: STEP_ORDER,
+            detail: "db-replay returned no outcome (forced)",
+          };
+          yield* emitCompleted(input.threadId, forcedFailure);
+          return yield* new ThreadRecoveryError({
+            threadId: input.threadId,
+            operation: "ThreadRecoveryService.recover",
+            detail: "forced db-replay returned no outcome",
+            attemptedSteps: STEP_ORDER,
+          });
+        }
+
         const step1 = yield* runSessionKeyStep(input, claudeHome);
         if (Option.isSome(step1)) {
           yield* emitCompleted(input.threadId, step1.value);
@@ -704,10 +743,37 @@ const makeThreadRecovery = (options?: ThreadRecoveryLiveOptions) =>
           );
       });
 
+    /**
+     * scheduleRehydrate - Flag a thread for forced db-replay on its
+     * next session spawn. See `ThreadRecoveryShape` docstring for the
+     * lifecycle rules (in-memory, one-shot, restart-loses).
+     */
+    const scheduleRehydrate: ThreadRecoveryShape["scheduleRehydrate"] = (threadId) =>
+      Effect.sync(() => {
+        pendingRehydrate.add(threadId);
+      });
+
+    /**
+     * consumePendingRehydrate - Read-and-clear the flag set by
+     * `scheduleRehydrate`. Delete-on-read ensures that if two spawns
+     * race (shouldn't happen in practice) only the first one sees the
+     * marker.
+     */
+    const consumePendingRehydrate: ThreadRecoveryShape["consumePendingRehydrate"] = (threadId) =>
+      Effect.sync(() => {
+        const pending = pendingRehydrate.has(threadId);
+        if (pending) {
+          pendingRehydrate.delete(threadId);
+        }
+        return pending;
+      });
+
     return {
       recover,
       recoverStream,
       debugBreak,
+      scheduleRehydrate,
+      consumePendingRehydrate,
       get streamEvents() {
         return Stream.fromPubSub(pubsub);
       },
