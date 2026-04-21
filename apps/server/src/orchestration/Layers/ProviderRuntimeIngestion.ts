@@ -1209,6 +1209,25 @@ const make = Effect.fn("make")(function* () {
       }
     }
 
+    // `/compact` fires a `thread.state.changed` with `state='compacted'`.
+    // The activity row already exists (see runtimeEventToActivities below),
+    // but activities don't surface as message bubbles — which means the
+    // user sees their own /compact message followed by silence. Mirror the
+    // Claude CLI terminal UI by also posting a system message describing
+    // the compaction, so the timeline shows a clear turn marker between
+    // pre- and post-compact history.
+    if (event.type === "thread.state.changed" && event.payload.state === "compacted") {
+      yield* orchestrationEngine.dispatch({
+        type: "thread.message.system.post",
+        commandId: providerCommandId(event, "compact-system-message"),
+        threadId: thread.id,
+        messageId: MessageId.make(`system:compact:${event.eventId}`),
+        text: "Context compacted. Earlier conversation history has been summarised. Skills, system prompts, and tool configurations are preserved.",
+        ...(eventTurnId ? { turnId: eventTurnId } : {}),
+        createdAt: now,
+      });
+    }
+
     const activities = runtimeEventToActivities(event);
     yield* Effect.forEach(activities, (activity) =>
       orchestrationEngine.dispatch({

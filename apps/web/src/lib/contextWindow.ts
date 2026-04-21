@@ -28,9 +28,21 @@ export type ContextWindowSnapshot = NullableContextWindowUsage & {
 export function deriveLatestContextWindowSnapshot(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
 ): ContextWindowSnapshot | null {
+  // After `/compact` fires we must drop the pre-compact snapshot: the old
+  // usedPercentage still says ~100% but the thread actually has plenty of
+  // headroom. The next turn's `thread.token-usage.updated` will replace it,
+  // but until then the banner would stay stuck. Return null when the most
+  // recent relevant activity is a compaction rather than a window update,
+  // so consumers (e.g. ContextWindowWarningBanner) see "no data" and hide.
   for (let index = activities.length - 1; index >= 0; index -= 1) {
     const activity = activities[index];
-    if (!activity || activity.kind !== "context-window.updated") {
+    if (!activity) {
+      continue;
+    }
+    if (activity.kind === "context-compaction") {
+      return null;
+    }
+    if (activity.kind !== "context-window.updated") {
       continue;
     }
 

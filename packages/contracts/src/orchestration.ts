@@ -658,6 +658,24 @@ const ThreadMessageAssistantCompleteCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+/**
+ * Posts a server-authored system message into a thread's transcript.
+ *
+ * Used for provider-side events that deserve a visible "turn marker" in
+ * the timeline rather than just an activity row — notably `/compact`,
+ * which Claude CLI's own terminal UI shows as a dedicated bubble.
+ * Internal-only; no client path should dispatch this directly.
+ */
+const ThreadMessageSystemPostCommand = Schema.Struct({
+  type: Schema.Literal("thread.message.system.post"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  messageId: MessageId,
+  text: Schema.String,
+  turnId: Schema.optional(TurnId),
+  createdAt: IsoDateTime,
+});
+
 const ThreadProposedPlanUpsertCommand = Schema.Struct({
   type: Schema.Literal("thread.proposed-plan.upsert"),
   commandId: CommandId,
@@ -700,6 +718,7 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadSessionSetCommand,
   ThreadMessageAssistantDeltaCommand,
   ThreadMessageAssistantCompleteCommand,
+  ThreadMessageSystemPostCommand,
   ThreadProposedPlanUpsertCommand,
   ThreadTurnDiffCompleteCommand,
   ThreadActivityAppendCommand,

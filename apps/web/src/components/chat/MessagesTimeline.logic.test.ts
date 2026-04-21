@@ -268,6 +268,57 @@ describe("deriveMessagesTimelineRows", () => {
     expect(assistantRows[1]?.showCompletionDivider).toBe(true);
   });
 
+  it("preserves system-role messages as message rows so the timeline renders them", () => {
+    // PR 5: /compact posts a server-authored system message. It must
+    // survive the logic layer as a `kind: 'message'` row with role
+    // 'system' so the timeline renderer can surface it as a banner.
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        {
+          id: "user-compact-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:00Z",
+          message: {
+            id: "user-compact" as never,
+            role: "user",
+            text: "/compact",
+            turnId: null,
+            createdAt: "2026-01-01T00:00:00Z",
+            streaming: false,
+          },
+        },
+        {
+          id: "system-compact-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:30Z",
+          message: {
+            id: "system:compact:event-1" as never,
+            role: "system",
+            text: "Context compacted.",
+            turnId: null,
+            createdAt: "2026-01-01T00:00:30Z",
+            streaming: false,
+          },
+        },
+      ],
+      completionDividerBeforeEntryId: null,
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    const systemRow = rows.find(
+      (row): row is Extract<(typeof rows)[number], { kind: "message" }> =>
+        row.kind === "message" && row.message.role === "system",
+    );
+
+    expect(systemRow).toBeDefined();
+    expect(systemRow?.message.text).toBe("Context compacted.");
+    expect(systemRow?.showCompletionDivider).toBe(false);
+    expect(systemRow?.showAssistantCopyButton).toBe(false);
+  });
+
   it("projects assistant diff summaries and user revert counts onto the affected rows", () => {
     const assistantTurnDiffSummary = {
       turnId: "turn-1" as never,
