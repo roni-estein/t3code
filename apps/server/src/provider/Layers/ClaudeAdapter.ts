@@ -1420,10 +1420,15 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
 
     // The SDK result.usage contains *accumulated* totals across all API calls
-    // (input_tokens, cache_read_input_tokens, etc. summed over every request).
-    // This does NOT represent the current context window size.
-    // Instead, use the last known context-window-accurate usage from task_progress
-    // events and treat the accumulated total as totalProcessedTokens.
+    // in the turn (input_tokens, cache_read_input_tokens, etc. summed over every
+    // request). This does NOT represent the current context window size, so we
+    // must not feed it into `usedTokens`/`lastUsedTokens` — doing so clamps to
+    // `maxTokens` and produces a phantom "context window full" reading on any
+    // multi-API-call turn. Instead, use the last known per-call-accurate usage
+    // captured from task_progress/task_notification events and treat the
+    // accumulated result total as `totalProcessedTokens` only. When no
+    // intra-turn capture has landed, suppress the token-usage event entirely —
+    // the client tolerates the missing activity and the banner hides gracefully.
     const accumulatedSnapshot = normalizeClaudeTokenUsage(
       result?.usage,
       resultContextWindow ?? context.lastKnownContextWindow,
@@ -1446,7 +1451,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
               }
             : {}),
         }
-      : accumulatedSnapshot;
+      : undefined;
 
     const turnState = context.turnState;
     if (!turnState) {
@@ -2024,6 +2029,37 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     if (context.turnState) {
       context.turnState.items.push(message.message);
       yield* backfillAssistantTextBlocksFromSnapshot(context, message);
+    }
+
+    // Capture per-API-call usage so `context.lastKnownTokenUsage` stays fresh
+    // on turns without sub-agent work. `BetaMessage.usage` is the per-response
+    // billing snapshot — on a single API call the sum of `input_tokens +
+    // cache_creation_input_tokens + cache_read_input_tokens` equals the true
+    // working-context size. Without this capture, the turn-complete emitter
+    // has no per-call anchor and must suppress `usedTokens` entirely (see
+    // `completeTurn`), causing the context-window banner to hide.
+    const assistantUsage = (message.message as { usage?: unknown } | undefined)?.usage;
+    if (assistantUsage) {
+      const normalizedUsage = normalizeClaudeTokenUsage(
+        assistantUsage,
+        context.lastKnownContextWindow,
+      );
+      if (normalizedUsage) {
+        context.lastKnownTokenUsage = normalizedUsage;
+        const usageStamp = yield* makeEventStamp();
+        yield* offerRuntimeEvent({
+          type: "thread.token-usage.updated",
+          eventId: usageStamp.eventId,
+          provider: PROVIDER,
+          createdAt: usageStamp.createdAt,
+          threadId: context.session.threadId,
+          ...(context.turnState ? { turnId: asCanonicalTurnId(context.turnState.turnId) } : {}),
+          payload: {
+            usage: normalizedUsage,
+          },
+          providerRefs: nativeProviderRefs(context),
+        });
+      }
     }
 
     context.lastAssistantUuid = message.uuid;
