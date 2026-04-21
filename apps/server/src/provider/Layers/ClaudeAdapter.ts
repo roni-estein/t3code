@@ -1391,10 +1391,15 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
 
     // The SDK result.usage contains *accumulated* totals across all API calls
-    // (input_tokens, cache_read_input_tokens, etc. summed over every request).
-    // This does NOT represent the current context window size.
-    // Instead, use the last known context-window-accurate usage from task_progress
-    // events and treat the accumulated total as totalProcessedTokens.
+    // in the turn (input_tokens, cache_read_input_tokens, etc. summed over every
+    // request). This does NOT represent the current context window size, so we
+    // must not feed it into `usedTokens`/`lastUsedTokens` — doing so clamps to
+    // `maxTokens` and produces a phantom "context window full" reading on any
+    // multi-API-call turn. Instead, use the last known per-call-accurate usage
+    // captured from task_progress/task_notification events and treat the
+    // accumulated result total as `totalProcessedTokens` only. When no
+    // intra-turn capture has landed, suppress the token-usage event entirely —
+    // the client tolerates the missing activity and the banner hides gracefully.
     const accumulatedSnapshot = normalizeClaudeTokenUsage(
       result?.usage,
       resultContextWindow ?? context.lastKnownContextWindow,
@@ -1417,7 +1422,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
               }
             : {}),
         }
-      : accumulatedSnapshot;
+      : undefined;
 
     const turnState = context.turnState;
     if (!turnState) {
