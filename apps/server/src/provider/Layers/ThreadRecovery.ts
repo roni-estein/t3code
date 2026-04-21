@@ -23,6 +23,7 @@ import { IsoDateTime, type ThreadId } from "@t3tools/contracts";
 import { Cause, Effect, Layer, Option, PubSub, Stream } from "effect";
 
 import { ProjectionProjectHistoryRepository } from "../../persistence/Services/ProjectionProjectHistory.ts";
+import { ProjectionProjectHistorySessionsRepository } from "../../persistence/Services/ProjectionProjectHistorySessions.ts";
 import { ProjectionThreadMessageRepository } from "../../persistence/Services/ProjectionThreadMessages.ts";
 import { ProviderSessionDirectoryPersistenceError, ThreadRecoveryError } from "../Errors.ts";
 import { encodeCwdForClaudeProjects, resolveClaudeSessionFilePath } from "../sessionHealth.ts";
@@ -228,6 +229,7 @@ function renderTranscript(
 const makeThreadRecovery = (options?: ThreadRecoveryLiveOptions) =>
   Effect.gen(function* () {
     const projectHistoryRepository = yield* ProjectionProjectHistoryRepository;
+    const projectHistorySessionsRepository = yield* ProjectionProjectHistorySessionsRepository;
     const threadMessageRepository = yield* ProjectionThreadMessageRepository;
 
     const defaultClaudeHome = options?.claudeHome;
@@ -389,14 +391,82 @@ const makeThreadRecovery = (options?: ThreadRecoveryLiveOptions) =>
           return Option.none<RecoveryOutcome>();
         }
         fresh.sort((a, b) => b.mtimeMs - a.mtimeMs);
-        const best = fresh[0]!;
-        yield* cachedFileReference(input.threadId, best.filePath);
-        yield* emitStepSucceeded(input.threadId, step, `resumed via scan: ${best.filePath}`);
+
+        // Ownership filter. See migration 029 + plan #523 Phase 2.
+        // The cwd-encoded directory can contain JSONLs belonging to
+        // other threads that happened to share the cwd (observed with
+        // #copy-writing + #HMR under /mnt/dev/www/tachepharmacy). Before
+        // accepting a candidate, look its session_key up in
+        // project_history_sessions:
+        //   - returns another thread's id → reject silently.
+        //   - returns this thread's id    → accept.
+        //   - returns null                → accept as uncatalogued (the
+        //                                   step succeeds and we record
+        //                                   it below so future scans
+        //                                   can short-circuit).
+        //
+        // TODO(plan #523 Phase 2 notes): JSONL preservation — the
+        // current implementation does not touch `utimes` on the winning
+        // file, so a subsequent `claude --resume` that rewrites the
+        // file can still age newer siblings past the freshness window.
+        // Snapshot-on-archive is the proposed fix and is deferred out
+        // of this PR.
+        let winner:
+          | {
+              readonly sessionId: string;
+              readonly filePath: string;
+              readonly mtimeMs: number;
+              readonly ownerKnown: boolean;
+            }
+          | undefined;
+        for (const candidate of fresh) {
+          const owner = yield* projectHistorySessionsRepository
+            .getThreadByKey({ sessionKey: candidate.sessionId })
+            .pipe(Effect.mapError(toPersistenceError("ThreadRecoveryService.scan.getThreadByKey")));
+          if (Option.isSome(owner) && owner.value !== input.threadId) {
+            // Owned by another thread — skip.
+            continue;
+          }
+          winner = {
+            sessionId: candidate.sessionId,
+            filePath: candidate.filePath,
+            mtimeMs: candidate.mtimeMs,
+            ownerKnown: Option.isSome(owner),
+          };
+          break;
+        }
+
+        if (!winner) {
+          yield* emitStepSkipped(
+            input.threadId,
+            step,
+            "all JSONL candidates are owned by other threads",
+          );
+          return Option.none<RecoveryOutcome>();
+        }
+
+        yield* cachedFileReference(input.threadId, winner.filePath);
+
+        // Catalog this session_key for our thread so future scans
+        // short-circuit the ownership check on the fast path. Only
+        // needed when the candidate was uncatalogued (ownerKnown ===
+        // false) — if it was already owned by us, the row is current.
+        if (!winner.ownerKnown) {
+          yield* projectHistorySessionsRepository
+            .recordSession({
+              threadId: input.threadId,
+              sessionKey: winner.sessionId,
+              firstSeenAt: IsoDateTime.make(new Date(now).toISOString()),
+            })
+            .pipe(Effect.mapError(toPersistenceError("ThreadRecoveryService.scan.recordSession")));
+        }
+
+        yield* emitStepSucceeded(input.threadId, step, `resumed via scan: ${winner.filePath}`);
         const outcome: RecoveryOutcome = {
           _tag: "resumed",
           step,
-          sessionKey: best.sessionId,
-          filePath: best.filePath,
+          sessionKey: winner.sessionId,
+          filePath: winner.filePath,
         };
         return Option.some(outcome);
       });
