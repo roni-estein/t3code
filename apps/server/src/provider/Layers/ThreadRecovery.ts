@@ -271,6 +271,50 @@ const makeThreadRecovery = (options?: ThreadRecoveryLiveOptions) =>
         })
         .pipe(Effect.mapError(toPersistenceError("ThreadRecoveryService.cacheFileReference")));
 
+    /**
+     * pickNewestOwnedCandidate - Scan the cwd-encoded projects dir and
+     * return the newest JSONL whose session_key is either owned by this
+     * thread or uncatalogued. Candidates owned by other threads are
+     * rejected (Phase 2 ownership filter).
+     *
+     * Used by Phase 3's staleness check: if step 1 resumed via a stored
+     * session_key but the cwd now holds a strictly-newer same-thread
+     * JSONL (e.g., post-/compact), prefer the newer one.
+     */
+    const pickNewestOwnedCandidate = (input: RecoverInput, claudeHome: string) =>
+      Effect.gen(function* () {
+        const dir = Path.join(claudeHome, "projects", encodeCwdForClaudeProjects(input.cwd));
+        const candidates = yield* Effect.promise(() => readJsonlCandidates(dir));
+        if (candidates.length === 0) {
+          return Option.none<{
+            readonly sessionId: string;
+            readonly filePath: string;
+            readonly mtimeMs: number;
+          }>();
+        }
+        const sorted = candidates.toSorted((a, b) => b.mtimeMs - a.mtimeMs);
+        for (const candidate of sorted) {
+          const owner = yield* projectHistorySessionsRepository
+            .getThreadByKey({ sessionKey: candidate.sessionId })
+            .pipe(
+              Effect.mapError(toPersistenceError("ThreadRecoveryService.staleness.getThreadByKey")),
+            );
+          if (Option.isSome(owner) && owner.value !== input.threadId) {
+            continue;
+          }
+          return Option.some({
+            sessionId: candidate.sessionId,
+            filePath: candidate.filePath,
+            mtimeMs: candidate.mtimeMs,
+          });
+        }
+        return Option.none<{
+          readonly sessionId: string;
+          readonly filePath: string;
+          readonly mtimeMs: number;
+        }>();
+      });
+
     const runSessionKeyStep = (input: RecoverInput, claudeHome: string) =>
       Effect.gen(function* () {
         yield* emitStepStarted(input.threadId, "session-key");
@@ -297,6 +341,43 @@ const makeThreadRecovery = (options?: ThreadRecoveryLiveOptions) =>
           );
           return Option.none<RecoveryOutcome>();
         }
+
+        // Phase 3 staleness check (plan #523). The imperative
+        // `session_key` sync via `ProviderSessionDirectory.upsert`
+        // normally keeps pace with /compact and other session advances
+        // (confirmed 2026-04-20 on thread `c96c5304`). If it ever fails
+        // to catch an advance, the stored session_key can point at a
+        // stale JSONL while a fresher same-thread JSONL already sits in
+        // the cwd. To stay robust, peek at the cwd's newest
+        // ownership-filtered candidate and prefer it if strictly newer.
+        //
+        // Threshold: strictly newer mtime (any newer file wins).
+        // Equality does NOT qualify. If this proves too aggressive in
+        // practice (e.g., tool state churn producing transient newer
+        // siblings), tighten to a "> N minutes" window here.
+        const storedStat = yield* Effect.promise(() => Fs.stat(filePath).catch(() => null));
+        if (storedStat && storedStat.isFile()) {
+          const newest = yield* pickNewestOwnedCandidate(input, claudeHome);
+          if (Option.isSome(newest)) {
+            const candidate = newest.value;
+            if (candidate.filePath !== filePath && candidate.mtimeMs > storedStat.mtimeMs) {
+              const skewMs = candidate.mtimeMs - storedStat.mtimeMs;
+              yield* emitStepSucceeded(
+                input.threadId,
+                "session-key",
+                `thread.recovery.prefer-newer-in-cwd: stored=${sessionKey} (${filePath}) -> newer=${candidate.sessionId} (${candidate.filePath}), skewMs=${skewMs}`,
+              );
+              const preferOutcome: RecoveryOutcome = {
+                _tag: "resumed",
+                step: "session-key",
+                sessionKey: candidate.sessionId,
+                filePath: candidate.filePath,
+              };
+              return Option.some(preferOutcome);
+            }
+          }
+        }
+
         yield* emitStepSucceeded(
           input.threadId,
           "session-key",
