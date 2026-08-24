@@ -33,6 +33,7 @@ import {
   checkClaudeProviderStatus,
   makePendingClaudeProvider,
   probeClaudeCapabilities,
+  probeClaudePlanUsage,
 } from "../Layers/ClaudeProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
@@ -157,7 +158,18 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         capacity: 1,
         timeToLive: CAPABILITIES_PROBE_TTL,
         lookup: () =>
-          probeClaudeCapabilities(effectiveConfig, processEnv, cwd).pipe(
+          Effect.gen(function* () {
+            const capabilities = yield* probeClaudeCapabilities(effectiveConfig, processEnv, cwd);
+            if (!capabilities) return undefined;
+            const planUsage = yield* probeClaudePlanUsage(effectiveConfig, processEnv, cwd);
+            return {
+              ...capabilities,
+              ...(planUsage ? { planUsage } : {}),
+            };
+          }).pipe(
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+            Effect.provideService(HttpClient.HttpClient, httpClient),
             Effect.provideService(Path.Path, path),
           ),
       });

@@ -135,7 +135,48 @@ function claudeWindowLabel(id: string): string {
     .join(" ");
 }
 
-/** Normalize Claude Agent SDK's structured `/usage` rate-limit windows. */
+function claudeLimitEntryId(value: UnknownRecord): string | null {
+  const kind = typeof value.kind === "string" ? value.kind : null;
+  const group = typeof value.group === "string" ? value.group : null;
+  if (kind === "session" || (group === "session" && !value.scope)) return "five_hour";
+  if (kind === "weekly_all" || (group === "weekly" && !value.scope)) return "seven_day";
+  if (kind !== "weekly_scoped" && group !== "weekly") return null;
+  const scope = asRecord(value.scope);
+  const model = asRecord(scope?.model);
+  const modelName =
+    typeof model?.display_name === "string"
+      ? model.display_name
+      : typeof model?.id === "string"
+        ? model.id
+        : "";
+  return /fable/i.test(modelName) ? "seven_day_fable" : null;
+}
+
+function claudeWindowFromRecord(id: string, window: UnknownRecord): ProviderPlanUsageWindow | null {
+  const usedPercent = [
+    window.utilization,
+    window.used_percentage,
+    window.usedPercentage,
+    window.percent,
+  ].reduce<number | null>((found, candidate) => found ?? normalizedPercent(candidate), null);
+  if (usedPercent === null) return null;
+  const resetsAt = [window.resets_at, window.resetsAt, window.reset_at, window.resetAt].reduce<
+    string | null
+  >((found, candidate) => found ?? isoFromString(candidate), null);
+  return {
+    id,
+    label: claudeWindowLabel(id),
+    usedPercent,
+    resetsAt,
+    ...(id === "five_hour"
+      ? { windowDurationMinutes: 5 * 60 }
+      : id.startsWith("seven_day")
+        ? { windowDurationMinutes: 7 * 24 * 60 }
+        : {}),
+  };
+}
+
+/** Normalize Claude's structured OAuth usage windows. */
 export function normalizeClaudePlanUsage(
   value: unknown,
   checkedAt: string,
@@ -151,23 +192,36 @@ export function normalizeClaudePlanUsage(
   const windows: ProviderPlanUsageWindow[] = [];
 
   for (const id of orderedKeys) {
-    if (id === "extra_usage") continue;
+    if (id === "extra_usage" || id === "limits") continue;
     const window = asRecord(rateLimits[id]);
     if (!window) continue;
-    const usedPercent = normalizedPercent(window.utilization);
-    if (usedPercent === null) continue;
-    windows.push({
-      id,
-      label: claudeWindowLabel(id),
-      usedPercent,
-      resetsAt: isoFromString(window.resets_at),
-      ...(id === "five_hour"
-        ? { windowDurationMinutes: 5 * 60 }
-        : id.startsWith("seven_day")
-          ? { windowDurationMinutes: 7 * 24 * 60 }
-          : {}),
-    });
+    const normalized = claudeWindowFromRecord(id, window);
+    if (normalized) windows.push(normalized);
   }
 
+  if (Array.isArray(rateLimits.limits)) {
+    for (const value of rateLimits.limits) {
+      const window = asRecord(value);
+      if (!window) continue;
+      const id = claudeLimitEntryId(window);
+      if (!id) continue;
+      const normalized = claudeWindowFromRecord(id, window);
+      if (!normalized) continue;
+      const existingIndex = windows.findIndex((candidate) => candidate.id === id);
+      if (existingIndex === -1) windows.push(normalized);
+      else windows[existingIndex] = normalized;
+    }
+  }
+
+  windows.sort((left, right) => {
+    const leftIndex = CLAUDE_WINDOW_ORDER.indexOf(left.id as (typeof CLAUDE_WINDOW_ORDER)[number]);
+    const rightIndex = CLAUDE_WINDOW_ORDER.indexOf(
+      right.id as (typeof CLAUDE_WINDOW_ORDER)[number],
+    );
+    return (
+      (leftIndex === -1 ? CLAUDE_WINDOW_ORDER.length : leftIndex) -
+      (rightIndex === -1 ? CLAUDE_WINDOW_ORDER.length : rightIndex)
+    );
+  });
   return windows.length > 0 ? { checkedAt, windows } : undefined;
 }

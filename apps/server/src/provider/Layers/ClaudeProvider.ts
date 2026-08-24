@@ -4,6 +4,7 @@ import {
   type ClaudeSettings,
   type ModelCapabilities,
   type ModelSelection,
+  type ProviderPlanUsage,
   type ServerProviderModel,
   type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
@@ -13,6 +14,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Result from "effect/Result";
+import { HttpClient } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import {
   createModelCapabilities,
@@ -43,7 +45,8 @@ import {
 } from "../providerSnapshot.ts";
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
-import { discoverClaudeSkills } from "../Drivers/ClaudeSkills.ts";
+import { discoverClaudeSkills, resolveClaudeConfigDirPath } from "../Drivers/ClaudeSkills.ts";
+import { fetchClaudeUsage, readClaudeAccessToken } from "../claudeUsageFetch.ts";
 import { normalizeClaudePlanUsage } from "../providerPlanUsage.ts";
 
 const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
@@ -666,6 +669,7 @@ type ClaudeCapabilitiesProbe = {
    */
   readonly apiProvider: string | undefined;
   readonly rateLimits?: unknown;
+  readonly planUsage?: ProviderPlanUsage;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
 };
 
@@ -845,6 +849,40 @@ const runClaudeCommand = Effect.fn("runClaudeCommand")(function* (
   return yield* spawnAndCollect(claudeSettings.binaryPath, command);
 });
 
+/**
+ * Best-effort subscription usage read through Claude's OAuth usage endpoint.
+ * This is isolated from the auth probe: every credential, keychain, network,
+ * and payload failure resolves to no usage without changing provider health.
+ */
+const probeClaudePlanUsage = Effect.fn("probeClaudePlanUsage")(function* (
+  claudeSettings: ClaudeSettings,
+  environment?: NodeJS.ProcessEnv,
+  cwd?: string,
+): Effect.fn.Return<
+  ProviderPlanUsage | undefined,
+  never,
+  | ChildProcessSpawner.ChildProcessSpawner
+  | FileSystem.FileSystem
+  | HttpClient.HttpClient
+  | Path.Path
+> {
+  const resolvedEnvironment = environment ?? process.env;
+  const credentialsDir = yield* resolveClaudeConfigDirPath(
+    claudeSettings,
+    resolvedEnvironment,
+    cwd,
+  );
+  const accessToken = yield* readClaudeAccessToken(credentialsDir, {
+    allowKeychain:
+      claudeSettings.homePath.trim().length === 0 &&
+      (resolvedEnvironment.CLAUDE_CONFIG_DIR?.trim() ?? "").length === 0,
+  });
+  if (accessToken === null) return undefined;
+  const payload = yield* fetchClaudeUsage(accessToken);
+  if (payload === null) return undefined;
+  return normalizeClaudePlanUsage(payload, DateTime.formatIso(yield* DateTime.now));
+});
+
 export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(function* (
   claudeSettings: ClaudeSettings,
   resolveCapabilities?: (
@@ -994,7 +1032,8 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       subscriptionType: capabilities.subscriptionType,
       authMethod: capabilities.tokenSource,
     }) ?? apiProviderAuthMetadata(capabilities.apiProvider);
-  const planUsage = normalizeClaudePlanUsage(capabilities.rateLimits, checkedAt);
+  const planUsage =
+    capabilities.planUsage ?? normalizeClaudePlanUsage(capabilities.rateLimits, checkedAt);
   return buildServerProvider({
     presentation: CLAUDE_PRESENTATION,
     enabled: claudeSettings.enabled,
@@ -1061,4 +1100,4 @@ export const makePendingClaudeProvider = (
     });
   });
 
-export { probeClaudeCapabilities };
+export { probeClaudeCapabilities, probeClaudePlanUsage };

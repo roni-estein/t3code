@@ -96,6 +96,51 @@ describe("provider plan usage", () => {
     });
   });
 
+  it("reads Fable from the OAuth endpoint's scoped limits array", () => {
+    expect(
+      normalizeClaudePlanUsage(
+        {
+          five_hour: { utilization: 3, resets_at: "2026-08-25T02:20:00Z" },
+          seven_day: { utilization: 10, resets_at: "2026-08-29T01:00:00Z" },
+          limits: [
+            {
+              group: "weekly",
+              percent: 18,
+              resets_at: "2026-08-29T01:00:00Z",
+              scope: { model: { display_name: "Claude Fable 5" } },
+            },
+          ],
+        },
+        checkedAt,
+      ),
+    ).toEqual({
+      checkedAt,
+      windows: [
+        {
+          id: "five_hour",
+          label: "Current session",
+          usedPercent: 3,
+          resetsAt: "2026-08-25T02:20:00.000Z",
+          windowDurationMinutes: 300,
+        },
+        {
+          id: "seven_day",
+          label: "All models",
+          usedPercent: 10,
+          resetsAt: "2026-08-29T01:00:00.000Z",
+          windowDurationMinutes: 10_080,
+        },
+        {
+          id: "seven_day_fable",
+          label: "Fable",
+          usedPercent: 18,
+          resetsAt: "2026-08-29T01:00:00.000Z",
+          windowDurationMinutes: 10_080,
+        },
+      ],
+    });
+  });
+
   it("omits unavailable and malformed usage", () => {
     expect(normalizeCodexPlanUsage({}, checkedAt)).toBeUndefined();
     expect(normalizeClaudePlanUsage(null, checkedAt)).toBeUndefined();
